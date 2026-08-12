@@ -1,24 +1,27 @@
 #include <Arduino.h>
 #include <ESP_Video.h>
+#include <cstring>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <esp_rom_sys.h>
 #include <esp_lcd_mipi_dsi.h>
-#include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
+#include "lcd_ek79007.h"
 
 static constexpr int lcd_width = 1024;
 static constexpr int lcd_height = 600;
+static constexpr size_t lcd_bytes_per_pixel = sizeof(uint16_t);
+static constexpr size_t display_buffer_count = 2;
 static constexpr size_t capture_buffer_count = 2;
 
 static ESPVideoClass video;
 static ESPVideoCaptureDevClass capture_device;
 static esp_lcd_panel_handle_t lcd_panel = nullptr;
+static void *display_buffers[display_buffer_count] = {};
+static size_t display_buffer_index = 0;
+static SemaphoreHandle_t display_refresh_semaphore = nullptr;
+static volatile uint32_t display_refresh_count = 0;
 static bool camera_started = false;
-
-struct LcdInitCommand {
-  uint8_t command;
-  uint8_t data;
-  uint32_t delay_ms;
-};
 
 static bool check_esp_err(esp_err_t err, const char *message) {
   if (err == ESP_OK) {
@@ -29,94 +32,47 @@ static bool check_esp_err(esp_err_t err, const char *message) {
   return false;
 }
 
+static bool IRAM_ATTR lcd_frame_complete_callback(
+  esp_lcd_panel_handle_t,
+  esp_lcd_dpi_panel_event_data_t *,
+  void *
+)
+{
+  BaseType_t high_task_woken = pdFALSE;
+  display_refresh_count = display_refresh_count + 1u;
+  xSemaphoreGiveFromISR(display_refresh_semaphore, &high_task_woken);
+  return high_task_woken == pdTRUE;
+}
+
 static bool start_lcd() {
-  Serial.println("Initializing LCD backlight and reset");
-  pinMode(LCD_BL, OUTPUT);
-  digitalWrite(LCD_BL, LCD_BL_OFF_LEVEL);
-
-  pinMode(LCD_RST, OUTPUT);
-  digitalWrite(LCD_RST, LCD_RST_ACTIVE_HIGH);
-  delay(10);
-  digitalWrite(LCD_RST, !LCD_RST_ACTIVE_HIGH);
-  delay(20);
-
-  esp_lcd_dsi_bus_handle_t dsi_bus = nullptr;
-  Serial.println("Creating MIPI-DSI bus");
-  esp_lcd_dsi_bus_config_t dsi_bus_config = {
-    .bus_id = 0,
-    .num_data_lanes = 2,
-    .phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT,
-    .lane_bit_rate_mbps = 1000,
-  };
-  if (!check_esp_err(esp_lcd_new_dsi_bus(&dsi_bus_config, &dsi_bus), "MIPI-DSI bus initialization failed")) {
+  Serial.println("Initializing project EK79007 LCD driver");
+  if (!check_esp_err(lcd_ek79007_init(&lcd_panel), "Project LCD initialization failed")) {
     return false;
   }
 
-  esp_lcd_panel_io_handle_t dbi_io = nullptr;
-  Serial.println("Creating MIPI-DSI DBI IO");
-  esp_lcd_dbi_io_config_t dbi_config = {
-    .virtual_channel = 0,
-    .lcd_cmd_bits = 8,
-    .lcd_param_bits = 8,
-  };
-  if (!check_esp_err(esp_lcd_new_panel_io_dbi(dsi_bus, &dbi_config, &dbi_io), "MIPI-DSI DBI initialization failed")) {
+  if (!check_esp_err(
+        esp_lcd_dpi_panel_get_frame_buffer(lcd_panel, display_buffer_count, &display_buffers[0], &display_buffers[1]),
+        "LCD frame buffer query failed"
+      )) {
     return false;
   }
 
-  esp_lcd_dpi_panel_config_t dpi_config = {
-    .virtual_channel = 0,
-    .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
-    .dpi_clock_freq_mhz = 52,
-    .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
-    .in_color_format = LCD_COLOR_FMT_RGB565,
-    .out_color_format = LCD_COLOR_FMT_RGB565,
-    .num_fbs = 1,
-    .video_timing = {
-      .h_size = lcd_width,
-      .v_size = lcd_height,
-      .hsync_pulse_width = 10,
-      .hsync_back_porch = 160,
-      .hsync_front_porch = 160,
-      .vsync_pulse_width = 1,
-      .vsync_back_porch = 23,
-      .vsync_front_porch = 12,
-    },
-  };
-  Serial.println("Creating MIPI-DSI DPI panel");
-  if (!check_esp_err(esp_lcd_new_panel_dpi(dsi_bus, &dpi_config, &lcd_panel), "MIPI-DSI DPI initialization failed")) {
+  display_refresh_semaphore = xSemaphoreCreateBinary();
+  if (display_refresh_semaphore == nullptr) {
+    Serial.println("LCD refresh semaphore creation failed");
     return false;
   }
 
-  static constexpr LcdInitCommand ek79007_init_commands[] = {
-    {0xB2, 0x10, 0},
-    {0x80, 0x8B, 0},
-    {0x81, 0x78, 0},
-    {0x82, 0x84, 0},
-    {0x83, 0x88, 0},
-    {0x84, 0xA8, 0},
-    {0x85, 0xE3, 0},
-    {0x86, 0x88, 0},
-    {0x11, 0x00, 120},
-  };
-  Serial.println("Initializing EK79007");
-  for (const auto &init_command : ek79007_init_commands) {
-    const void *data = (init_command.command == 0x11) ? nullptr : &init_command.data;
-    const size_t data_size = (data == nullptr) ? 0 : 1;
-    if (!check_esp_err(esp_lcd_panel_io_tx_param(dbi_io, init_command.command, data, data_size), "EK79007 initialization failed")) {
-      return false;
-    }
-    delay(init_command.delay_ms);
-  }
-
-  Serial.println("Starting MIPI-DSI panel");
-  if (!check_esp_err(esp_lcd_panel_init(lcd_panel), "MIPI-DSI panel initialization failed")) {
-    return false;
-  }
-  if (!check_esp_err(esp_lcd_panel_disp_on_off(lcd_panel, true), "MIPI-DSI panel enable failed")) {
+  esp_lcd_dpi_panel_event_callbacks_t display_callbacks = {};
+  display_callbacks.on_frame_buf_complete = lcd_frame_complete_callback;
+  if (!check_esp_err(
+        esp_lcd_dpi_panel_register_event_callbacks(lcd_panel, &display_callbacks, nullptr),
+        "LCD refresh callback registration failed"
+      )) {
     return false;
   }
 
-  digitalWrite(LCD_BL, LCD_BL_ON_LEVEL);
+  display_buffer_index = 0;
   return true;
 }
 
@@ -156,6 +112,100 @@ static bool start_camera() {
   return true;
 }
 
+static bool copy_frame_to_display_buffer(const ESPVideoBufferClass &buffer, void *display_buffer)
+{
+  const int frame_width = static_cast<int>(buffer.getWidth());
+  const int frame_height = static_cast<int>(buffer.getHeight());
+  if ((frame_width <= 0) || (frame_height <= 0) || (frame_width > lcd_width)) {
+    Serial.printf("Unsupported frame size: %d x %d\n", frame_width, frame_height);
+    return false;
+  }
+
+  const int draw_height = min(frame_height, lcd_height);
+  const int source_y = (frame_height - draw_height) / 2;
+  const int destination_x = (lcd_width - frame_width) / 2;
+  const int destination_y = (lcd_height - draw_height) / 2;
+  const size_t source_row_size = static_cast<size_t>(frame_width) * lcd_bytes_per_pixel;
+  const size_t source_offset = static_cast<size_t>(source_y) * source_row_size;
+  const size_t required_buffer_size = source_offset + static_cast<size_t>(draw_height) * source_row_size;
+  if (buffer.size() < required_buffer_size) {
+    Serial.printf(
+      "Camera frame is truncated: %lu < %lu bytes\n",
+      static_cast<unsigned long>(buffer.size()),
+      static_cast<unsigned long>(required_buffer_size)
+    );
+    return false;
+  }
+
+  uint8_t *destination_buffer = static_cast<uint8_t *>(display_buffer);
+  const size_t destination_row_size = static_cast<size_t>(lcd_width) * lcd_bytes_per_pixel;
+  if (destination_y > 0) {
+    memset(destination_buffer, 0, static_cast<size_t>(destination_y) * destination_row_size);
+  }
+  if (destination_y + draw_height < lcd_height) {
+    memset(
+      destination_buffer + static_cast<size_t>(destination_y + draw_height) * destination_row_size,
+      0,
+      static_cast<size_t>(lcd_height - destination_y - draw_height) * destination_row_size
+    );
+  }
+
+  const uint8_t *source_buffer = buffer.data() + source_offset;
+  for (int row = 0; row < draw_height; ++row) {
+    uint8_t *destination_row = destination_buffer + static_cast<size_t>(destination_y + row) * destination_row_size;
+    if (destination_x > 0) {
+      memset(destination_row, 0, static_cast<size_t>(destination_x) * lcd_bytes_per_pixel);
+    }
+    destination_row += static_cast<size_t>(destination_x) * lcd_bytes_per_pixel;
+    memcpy(destination_row, source_buffer + static_cast<size_t>(row) * source_row_size, source_row_size);
+    if (destination_x + frame_width < lcd_width) {
+      memset(
+        destination_row + source_row_size,
+        0,
+        static_cast<size_t>(lcd_width - destination_x - frame_width) * lcd_bytes_per_pixel
+      );
+    }
+  }
+
+  return true;
+}
+
+static bool display_camera_frame(const ESPVideoBufferClass &buffer)
+{
+  const size_t next_buffer_index = (display_buffer_index + 1) % display_buffer_count;
+  if (!copy_frame_to_display_buffer(buffer, display_buffers[next_buffer_index])) {
+    return false;
+  }
+
+  if (!check_esp_err(
+        esp_lcd_panel_draw_bitmap(
+          lcd_panel,
+          0,
+          0,
+          lcd_width,
+          lcd_height,
+          display_buffers[next_buffer_index]
+        ),
+        "LCD frame switch failed"
+      )) {
+    return false;
+  }
+
+  display_buffer_index = next_buffer_index;
+  return true;
+}
+
+static bool wait_for_next_display_refresh()
+{
+  const uint32_t refresh_count_snapshot = display_refresh_count;
+  while (display_refresh_count == refresh_count_snapshot) {
+    if (xSemaphoreTake(display_refresh_semaphore, portMAX_DELAY) != pdTRUE) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void setup() {
   esp_rom_printf("Starting MIPI-CSI display test\n");
   Serial.begin(115200);
@@ -177,6 +227,12 @@ void loop() {
     return;
   }
 
+  if (!wait_for_next_display_refresh()) {
+    Serial.println("LCD refresh synchronization failed");
+    delay(10);
+    return;
+  }
+
   ESPVideoBufferClass buffer = capture_device.captureBuffer();
   if (!buffer.valid()) {
     Serial.println("Camera capture failed");
@@ -184,24 +240,7 @@ void loop() {
     return;
   }
 
-  const int frame_width = static_cast<int>(buffer.getWidth());
-  const int frame_height = static_cast<int>(buffer.getHeight());
-  if ((frame_width <= 0) || (frame_height <= 0) || (frame_width > lcd_width)) {
-    Serial.printf("Unsupported frame size: %d x %d\n", frame_width, frame_height);
-    delay(1000);
-    return;
-  }
-
-  const int draw_height = min(frame_height, lcd_height);
-  const int source_y = (frame_height - draw_height) / 2;
-  const int destination_x = (lcd_width - frame_width) / 2;
-  const int destination_y = (lcd_height - draw_height) / 2;
-  const uint8_t *frame_data = buffer.data() + source_y * frame_width * sizeof(uint16_t);
-
-  if (!check_esp_err(
-        esp_lcd_panel_draw_bitmap(lcd_panel, destination_x, destination_y, destination_x + frame_width, destination_y + draw_height, frame_data),
-        "LCD frame drawing failed"
-      )) {
+  if (!display_camera_frame(buffer)) {
     delay(10);
   }
 }

@@ -1,0 +1,7 @@
+dependencies:
+  idf: '>=5.5'
+  waveshare/waveshare_boards: ">=0.3.5"
+  espressif/esp_video_capture_service: ^0.5.1
+  espressif/esp_video_render: ~1.1.0
+  espressif/gmf_video: ~1.1.0
+  espressif/esp_lvgl_port: ^2.9.0

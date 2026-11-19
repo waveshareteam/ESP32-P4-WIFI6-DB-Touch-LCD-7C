@@ -1,0 +1,2 @@
+dependencies:
+  waveshare/waveshare_boards: ">=0.3.5"

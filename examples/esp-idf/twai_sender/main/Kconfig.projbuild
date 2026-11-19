@@ -1,0 +1,15 @@
+menu "Example Configuration"
+
+    config EXAMPLE_TWAI_TX_GPIO
+        int "TWAI TX GPIO Num"
+        default 22
+        help
+            GPIO number for TWAI TX to transceiver.
+
+    config EXAMPLE_TWAI_RX_GPIO
+        int "TWAI RX GPIO Num"
+        default 21
+        help
+            GPIO number for TWAI RX from transceiver.
+
+endmenu

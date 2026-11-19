@@ -1,0 +1,4 @@
+## IDF Component Manager Manifest File
+dependencies:
+  waveshare/waveshare_boards: ">=0.3.5"
+  espressif/esp_lvgl_adapter: "*"

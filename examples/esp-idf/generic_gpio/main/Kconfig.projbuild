@@ -1,0 +1,21 @@
+menu "Generic GPIO Example"
+
+    choice EXAMPLE_GPIO_INITIAL_MODE_CHOICE
+        prompt "Initial direction of the monitored GPIOs"
+        default EXAMPLE_GPIO_INITIAL_MODE_INPUT
+        help
+            Direction the expansion header GPIOs are configured to when the example starts.
+
+        config EXAMPLE_GPIO_INITIAL_MODE_INPUT
+            bool "Input"
+        config EXAMPLE_GPIO_INITIAL_MODE_OUTPUT
+            bool "Output"
+    endchoice
+
+    # Value of the matching gpio_mode_t enumerator (GPIO_MODE_INPUT = 1, GPIO_MODE_OUTPUT = 2).
+    config EXAMPLE_GPIO_INITIAL_MODE
+        int
+        default 1 if EXAMPLE_GPIO_INITIAL_MODE_INPUT
+        default 2 if EXAMPLE_GPIO_INITIAL_MODE_OUTPUT
+
+endmenu

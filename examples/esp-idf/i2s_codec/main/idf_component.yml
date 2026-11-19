@@ -1,0 +1,5 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf:
+    version: '>=5.5'
+  waveshare/waveshare_boards: ">=0.3.5"

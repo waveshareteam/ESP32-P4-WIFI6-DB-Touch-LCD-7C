@@ -1,0 +1,47 @@
+menu "Echo RS485 Example Configuration"
+
+    config ECHO_UART_PORT_NUM
+        int "UART port number"
+        default 1
+        help
+            UART communication port number for the example.
+            See UART documentation for available port numbers.
+
+    config ECHO_UART_BAUD_RATE
+        int "UART communication speed"
+        range 1200 115200
+        default 115200
+        help
+            UART communication speed.
+
+    config ECHO_RS485_RX_IO
+        int "RS485 RXD pin number"
+        default 27
+        help
+            GPIO number for RS485 RO pin. See UART documentation for more information
+            about available pin numbers for UART.
+
+    config ECHO_RS485_TX_IO
+        int "RS485 TXD pin number"
+        default 26
+        help
+            GPIO number for RS485 DI pin. See UART documentation for more information
+            about available pin numbers for UART.
+
+    config ECHO_RS485_DIRECTION_IO
+        int "RS485 ~RE/DE pin number"
+        default 34
+        help
+            GPIO number for the pin to connected to
+            ~RE/DE pin of RS485 transceiver to switch direction.
+            See UART documentation for more information about available pin
+            numbers for UART.
+
+    config ECHO_TASK_STACK_SIZE
+        int "UART echo RS485 example task stack size"
+        range 1024 16384
+        default 3072
+        help
+            Defines stack size for UART echo RS485 example. Insufficient stack size can cause crash.
+
+endmenu

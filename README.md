@@ -1,110 +1,124 @@
-# Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C
+<div align="center">
+  <h1>ESP32-P4-WIFI6-DB-Touch-LCD-7C</h1>
+  <p><strong>ESP32-P4 development board with an ESP32-C5 Wi-Fi 6 coprocessor and a 7-inch 1024 × 600 MIPI-DSI capacitive touch display</strong></p>
+  <p><strong>English</strong> | <a href="README_ZH.md">简体中文</a></p>
+  <p>
+    <a href="https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/actions/workflows/build.yml"><img alt="Build" src="https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/actions/workflows/build.yml/badge.svg"></a>
+    <a href="https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C"></a>
+  </p>
+  <p>
+    <a href="https://www.waveshare.com/esp32-p4-wifi6-db-touch-lcd-7c.htm">🛒 Product</a> &middot;
+    <a href="https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/releases/latest">📦 Firmware</a> &middot;
+    <a href="examples/esp-idf/">🧩 ESP-IDF</a> &middot;
+    <a href="examples/arduino/examples/">🔧 Arduino</a> &middot;
+    <a href="https://docs.waveshare.com/ESP32-P4-WIFI6-DB-Touch-LCD-7C">📖 Documentation</a>
+  </p>
+</div>
 
-[English Version](./README_EN.md)
+---
 
-这是 Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C 开发板的示例和固件工程。
-工程同时包含 Arduino 示例、ESP-IDF 示例、板级支持包（BSP）以及一个较完整的
-ESP-Brookesia 应用示例。
+## ✨ Overview
 
-## 板载外设
+The ESP32-P4-WIFI6-DB-Touch-LCD-7C pairs an ESP32-P4 host with an ESP32-C5 that provides Wi-Fi 6 and Bluetooth LE over SDIO, and a 7-inch MIPI-DSI capacitive touch display. This repository provides ESP-IDF and Arduino examples, a hardware test console, and an ESP-Brookesia application.
 
-| 外设 | 说明 |
+| Feature | Device / interface |
 | --- | --- |
-| 主控 | ESP32-P4，负责应用、显示、摄像头、音频和外设控制 |
-| 无线 | ESP32-C5 无线协处理器，通过 ESP-Hosted SDIO 连接 ESP32-P4，提供 Wi-Fi 6 和 Bluetooth/BLE 能力 |
-| LCD | EK79007，1024×600 横屏 MIPI-DSI LCD，双数据通道 |
-| 触摸 | GT911 电容触摸控制器，使用共享 I2C 总线 |
-| 摄像头 | MIPI-CSI 摄像头接口，BSP 支持 OV5647、SC2336 等传感器 |
-| 音频 | ES8389 Codec，支持扬声器播放和两路差分模拟麦克风输入 |
-| RTC | PCF85063A 实时时钟，I2C 地址为 `0x51` |
-| 存储 | microSD 卡，4-bit SDMMC 接口 |
-| USB | USB 接口和 USB Host 支持；USB 差分信号为 GPIO24/GPIO25 |
-| CAN | 板载 TWAI/CAN 收发器 |
-| 串口 | 板载 RS232 和 RS485 收发器 |
-| 指示灯 | 两个用户 LED：GPIO2、GPIO3，低电平点亮 |
-| 扩展排针 | 提供 14 个扩展 GPIO：`32, 33, 49, 50, 52, 51, 48, 47, 46, 36, 25, 24, 5, 4` |
+| MCU | ESP32-P4NRW32X with dual high-performance RISC-V cores and a low-power core |
+| Wireless | ESP32-C5-MINI-1 coprocessor with dual-band Wi-Fi 6 and Bluetooth LE over 4-bit SDIO |
+| Memory | 32 MB NOR Flash and 32 MB in-package PSRAM |
+| Display | 7-inch 1024 × 600 LCD with EK79007 driver, 2-lane MIPI-DSI and PWM backlight control |
+| Touch | GT911 capacitive touch controller over I2C |
+| Camera | 2-lane MIPI-CSI connector with SCCB control. The camera preview example uses OV5647 by default. |
+| Audio | ES8389 codec over I2C and I2S, with amplified speaker output, two differential analog mic inputs and a headset jack |
+| RTC | PCF85063ATL over I2C |
+| Storage | On-board microSD slot over 4-bit SDMMC |
+| USB | USB 2.0 High-Speed port and USB-to-UART0 bridge for flashing and serial logs |
+| Communication | TWAI/CAN, RS232 and RS485 with on-board transceivers |
+| Expansion | P1 (16-pin) and P2 (13-pin) headers exposing 13 ESP32-P4 GPIOs and power and communication signals |
 
-## 关键引脚
+## 📦 Quick Start
 
-| 功能 | 引脚 |
+The fastest way to try an example is a ready-to-flash package from the
+[latest release](https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/releases/latest).
+
+1. Download the `*-combined.zip` package for the example and framework version you need.
+2. Extract the archive and install esptool with `python -m pip install esptool`.
+3. Connect the board over USB.
+4. Run `flash_combined.bat COMx` on Windows or `./flash_combined.sh /dev/ttyACM0` on Linux.
+5. Reset the board if it does not restart automatically.
+
+## 🧪 Examples
+
+### ESP-IDF
+
+| Example | Main feature |
 | --- | --- |
-| 共享 I2C | SDA GPIO7，SCL GPIO8 |
-| ES8389 I2S | MCLK GPIO13，BCLK GPIO12，WS GPIO10，DOUT GPIO9，DIN GPIO11 |
-| 音频功放使能 | GPIO53 |
-| LCD | 复位 GPIO31，背光 GPIO30 |
-| GT911 | 复位 GPIO23，中断脚未连接 |
-| SDMMC | CLK GPIO43，CMD GPIO44，D0-D3 GPIO39/40/41/42，供电 GPIO45（低有效） |
-| TWAI/CAN | TX GPIO22，RX GPIO21 |
-| RS485 | TX GPIO26，RX GPIO27，方向控制 GPIO34 |
-| RS232 | TX GPIO28，RX GPIO29 |
-| ESP-Hosted SDIO | CLK GPIO18，CMD GPIO19，D0-D3 GPIO14/15/16/17，复位 GPIO54 |
+| [board_check](examples/esp-idf/board_check/) | Chip, Flash, PSRAM and heap information |
+| [nvs_counter](examples/esp-idf/nvs_counter/) | NVS persistent counter |
+| [generic_gpio](examples/esp-idf/generic_gpio/) | General-purpose GPIO input and output |
+| [user_led](examples/esp-idf/user_led/) | User LED control |
+| [mipi_dsi](examples/esp-idf/mipi_dsi/) | MIPI-DSI LCD display |
+| [lvgl_v8_demo](examples/esp-idf/lvgl_v8_demo/) | LVGL v8 display benchmark |
+| [lvgl_v9_demo](examples/esp-idf/lvgl_v9_demo/) | LVGL v9 display benchmark |
+| [sdmmc](examples/esp-idf/sdmmc/) | microSD card access |
+| [uart_rs232](examples/esp-idf/uart_rs232/) | RS232 communication |
+| [uart_rs485](examples/esp-idf/uart_rs485/) | RS485 communication |
+| [i2c_console](examples/esp-idf/i2c_console/) | I2C scanning and console tools |
+| [wifi_sta](examples/esp-idf/wifi_sta/) | Connect to Wi-Fi via ESP-Hosted |
+| [rtc](examples/esp-idf/rtc/) | PCF85063A real-time clock |
+| [i2s_codec](examples/esp-idf/i2s_codec/) | I2S codec audio |
+| [mipi_csi](examples/esp-idf/mipi_csi/) | MIPI-CSI camera capture and display |
+| [twai_sender](examples/esp-idf/twai_sender/) | TWAI/CAN frame transmission |
+| [twai_listen_only](examples/esp-idf/twai_listen_only/) | TWAI/CAN listen-only reception |
+| [usb_extend_screen](examples/esp-idf/usb_extend_screen/) | USB extended display |
+| [bleprph_gatt](examples/esp-idf/bleprph_gatt/) | ESP-Hosted NimBLE GATT server |
+| [hw_console](examples/esp-idf/hw_console/) | Serial-console hardware test firmware |
 
-ES8389、PCF85063A、GT911 和摄像头 SCCB 共用 GPIO7/GPIO8 I2C 总线，使用这些
-外设时不要把这两个 GPIO 当作普通 GPIO 重复配置。
+### Arduino
 
-## 目录说明
+Follow the [board definition guide (Chinese)](examples/arduino/examples/esp32/README.md) first, then select `Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C` in the Arduino IDE.
 
-| 目录 | 用途 |
+| Example | Main feature |
 | --- | --- |
-| `asserts/` | 预留目录，当前为空 |
-| `hardware/` | 硬件资料预留目录，当前为空 |
-| `examples/Arduino/` | Arduino IDE 示例，每个子目录都是一个独立示例 |
-| `examples/esp_idf/` | ESP-IDF 外设和板级功能测试示例，按编号组织 |
-| `firmware/esp32_p4_wifi6_db_touch_lcd_7c/` | ESP-IDF 板级支持包（BSP），提供显示、触摸、音频、RTC、SD 卡、USB、摄像头等接口 |
-| `firmware/brookesia_test/` | 基于 ESP-Brookesia/Xiaozhi 的完整应用示例，综合使用显示、触摸、音频、Wi-Fi、RTC 和摄像头等功能 |
+| [board_check](examples/arduino/examples/board_check/) | Chip, Flash, PSRAM and memory information |
+| [gpio](examples/arduino/examples/gpio/) | GPIO and user LED control |
+| [i2c](examples/arduino/examples/i2c/) | I2C device scanning |
+| [i2s](examples/arduino/examples/i2s/) | ES8389 microphone-to-speaker loopback |
+| [mipi_csi](examples/arduino/examples/mipi_csi/) | Camera capture and display |
+| [mipi_dsi](examples/arduino/examples/mipi_dsi/) | LCD initialization and color bars |
+| [rtc](examples/arduino/examples/rtc/) | PCF85063A time access |
+| [sdmmc](examples/arduino/examples/sdmmc/) | microSD file access |
+| [twai](examples/arduino/examples/twai/) | TWAI/CAN reception |
+| [uart/rs232](examples/arduino/examples/uart/rs232/) | USB serial to RS232 bridge |
+| [uart/rs485](examples/arduino/examples/uart/rs485/) | USB serial to RS485 half-duplex bridge |
 
-## Arduino 示例
+### Application
 
-`examples/Arduino/` 下的示例可在 Arduino IDE 中选择
-`Waveshare ESP32-P4-WIFI6-DB-Touch-LCD-7C` 后单独打开和上传。
+[`examples/factory`](examples/factory/) contains the integrated ESP-Brookesia application with display, touch, audio, Wi-Fi and Xiaozhi features.
 
-| 目录 | 功能 |
-| --- | --- |
-| `board_check` | 打印芯片、Flash、PSRAM 和内存信息 |
-| `gpio` | 通过串口命令测试 GPIO 和用户 LED |
-| `i2c` | 扫描 I2C 设备地址 |
-| `i2s` | ES8389 麦克风到扬声器的 I2S 回环 |
-| `mipi_csi` | 采集摄像头画面并显示到 LCD |
-| `mipi_dsi` | 初始化 MIPI-DSI LCD 并显示测试色条 |
-| `rtc` | 读取 PCF85063A RTC，RTC 无效时使用编译时间初始化 |
-| `sdmmc` | 挂载 microSD 并测试文件读写 |
-| `squareline_wifi_clock` | SquareLine/LVGL Wi-Fi 时钟界面 |
-| `twai` | 以监听模式接收 500 kbit/s TWAI/CAN 报文 |
-| `uart/rs232` | USB 串口与 RS232 之间的双向桥接 |
-| `uart/rs485` | USB 串口与 RS485 之间的半双工双向桥接 |
+### ESP32-P4 and ESP32-C5 Wireless
 
-每个 Arduino 示例的具体操作步骤见对应目录中的 `README.md`。
+The ESP32-P4 does not have built-in Wi-Fi or Bluetooth. The on-board ESP32-C5 connects over 4-bit SDIO and provides Wi-Fi 6 and Bluetooth LE. Wireless operation requires a P4 host application and compatible firmware on the C5 coprocessor; flashing the P4 application does not update the C5 firmware. Keep the ESP-Hosted configurations on both sides compatible. See [wifi_sta](examples/esp-idf/wifi_sta/) and [bleprph_gatt](examples/esp-idf/bleprph_gatt/).
 
-## ESP-IDF 示例
+## 🛠️ Development Environment
 
-`examples/esp_idf/` 中每个编号目录都是一个独立的 ESP-IDF 工程：
+| Framework | Version | Examples |
+| --- | --- | ---: |
+| ESP-IDF | `v5.5.6`, `v6.1` | 20 |
+| Arduino-ESP32 | `3.3.12` | 11 |
 
-| 目录 | 功能 |
-| --- | --- |
-| `00_board_check` | 开发板基础信息检查 |
-| `01_nvs_counter` | NVS 非易失计数器 |
-| `02_gpio_input_test` | GPIO 输入和触摸输入测试 |
-| `03_led_test` | 用户 LED 测试 |
-| `04_mipi_dsi_test` | MIPI-DSI 显示色条测试 |
-| `05_sdmmc_test` | SDMMC 卡测试 |
-| `06_uart_test` | UART 回环测试 |
-| `07_i2c_console_test` | I2C 控制台工具 |
-| `08_wifi_test` | ESP32-C5 ESP-Hosted Wi-Fi 测试 |
-| `09_bt_test` | ESP32-C5 Hosted Bluetooth/BLE 测试 |
-| `10_rtc_test` | PCF85063A RTC 测试 |
-| `11_i2s_codec` | ES8389/ES8311 I2S Codec 测试 |
-| `12_mipi_csi_test` | MIPI-CSI 摄像头显示测试 |
-| `13_twai_test` | TWAI/CAN 测试 |
-| `14_usb_extend_screen` | 通过 USB 将开发板作为电脑扩展屏 |
+## 📚 Resources
 
-ESP-IDF 示例的编译、烧录和配置方法见各目录下的 `README.md` 或
-`README_CN.md`。
+- [Hardware reference](docs/hw-reference/USER_GUIDE.md)
+- [Product page](https://www.waveshare.com/esp32-p4-wifi6-db-touch-lcd-7c.htm)
+- [Wiki](https://docs.waveshare.com/ESP32-P4-WIFI6-DB-Touch-LCD-7C)
 
-## 固件和 BSP 的关系
+## 🤝 Support
 
-`firmware/esp32_p4_wifi6_db_touch_lcd_7c/` 是可复用的 BSP 组件，不是单独的
-应用程序。ESP-IDF 应用通过该 BSP 初始化本开发板的硬件。
+- Example or repository problem: [open an issue](https://github.com/waveshareteam/ESP32-P4-WIFI6-DB-Touch-LCD-7C/issues/new/choose).
+- Product usage, hardware or order questions: [Waveshare support](https://service.waveshare.com/).
 
-`firmware/brookesia_test/` 是一个完整应用工程，使用本地 BSP 运行综合 UI 和
-功能测试。ESP32-C5 无线协处理器需要单独烧录匹配的 ESP-Hosted 固件；烧录
-ESP32-P4 应用不会自动更新 C5 固件。
+## 📄 License
+
+Apache License 2.0. See [LICENSE](LICENSE).

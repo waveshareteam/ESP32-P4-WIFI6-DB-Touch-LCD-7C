@@ -14,7 +14,7 @@
 
 ## 怎么运行
 
-1. 安装示例所包含的库。
+1. 安装 `esp32 by Espressif Systems` **3.3.12** 开发板包以及示例所包含的库。
 2. 在「工具」菜单中按以下配置选择开发板和串口：
 
    | 工具菜单 | 值 |
@@ -30,4 +30,5 @@ LCD 显示摄像头实时画面；检测到摄像头后日志输出 `OV5647 dire
 
 ## 常见问题
 
-LCD 使用同目录的 `lcd_ek79007.cpp` 而不是 `ESP32_Display_Panel`，以避免新旧 I2C 驱动冲突。预编译的 `esp_video` 库会依次探测多种传感器，出现其他传感器的探测失败日志属于正常现象。
+- **为什么提示 `dw-gdma: dw_gdma_channel_register_event_callbacks(675): user context not in internal RAM` / `Camera capture start failed`**：请确认 Arduino-ESP32 内核版本为 **3.3.12** 并选择 `ESP32P4 Dev Module`。若使用 4.0.0 等预编译库中 `CONFIG_DW_GDMA_ISR_IRAM_SAFE=y` 且 `CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=n` 的版本，CSI 控制器上下文会分配到 PSRAM 并被 DW-GDMA 拒绝；切换回 Arduino-ESP32 **3.3.12**（或改用 [ESP-IDF `mipi_csi` 示例](../../../esp-idf/mipi_csi/README_ZH.md)）即可正常运行。
+- LCD 使用同目录的 `lcd_ek79007.cpp` 而不是 `ESP32_Display_Panel`，以避免新旧 I2C 驱动冲突。预编译的 `esp_video` 库会依次探测多种传感器，出现其他传感器的探测失败日志属于正常现象。

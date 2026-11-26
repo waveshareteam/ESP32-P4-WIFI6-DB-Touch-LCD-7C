@@ -12,7 +12,7 @@ Reads the on-board PCF85063A real-time clock over I2C (address `0x51`) and print
 
 ## How to Run
 
-1. Install any libraries the sketch includes.
+1. Install sp32 by Espressif Systems **3.3.12** and any libraries the sketch includes.
 2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |

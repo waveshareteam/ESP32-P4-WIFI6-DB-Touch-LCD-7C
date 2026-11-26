@@ -13,7 +13,7 @@
 
 ## 怎么运行
 
-1. 安装 `ESP32_Display_Panel`（`1.0.4`）和 `esp-lib-utils`（`0.2.3`）库。
+1. 安装 `esp32 by Espressif Systems` **3.3.12** 开发板包，以及 `ESP32_Display_Panel`（`1.0.4`）和 `esp-lib-utils`（`0.2.3`）库。
 2. 在「工具」菜单中按以下配置选择开发板和串口：
 
    | 工具菜单 | 值 |

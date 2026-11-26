@@ -13,7 +13,7 @@ Initializes the on-board microSD slot over 4-bit SDMMC, prints the card and file
 
 ## How to Run
 
-1. Install any libraries the sketch includes.
+1. Install sp32 by Espressif Systems **3.3.12** and any libraries the sketch includes.
 2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |

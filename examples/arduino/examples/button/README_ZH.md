@@ -12,14 +12,15 @@
 
 ## 怎么运行
 
-1. 在「工具」菜单中按以下配置选择开发板和串口：
+1. 安装 `esp32 by Espressif Systems` **3.3.12** 开发板包。
+2. 在「工具」菜单中按以下配置选择开发板和串口：
 
    | 工具菜单 | 值 |
    | --- | --- |
    | 开发板 | ESP32P4 Dev Module |
    | PSRAM | Enabled |
    | Partition Scheme | Huge APP (3MB No OTA/1MB SPIFFS) |
-2. 打开 `button.ino` 并上传，然后以 115200 波特率打开串口监视器。
+3. 打开 `button.ino` 并上传，然后以 115200 波特率打开串口监视器。
 
 ## 预期现象
 

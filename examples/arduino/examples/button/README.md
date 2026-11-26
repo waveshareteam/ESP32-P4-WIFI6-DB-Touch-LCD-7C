@@ -12,14 +12,15 @@ Reads the on-board BOOT button (`Key2`, `BOOT_PIN` = GPIO35, active LOW) with so
 
 ## How to Run
 
-1. Select the board and serial port in **Tools**:
+1. Install `esp32 by Espressif Systems` **3.3.12**.
+2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |
    | --- | --- |
    | Board | ESP32P4 Dev Module |
    | PSRAM | Enabled |
    | Partition Scheme | Huge APP (3MB No OTA/1MB SPIFFS) |
-2. Open `button.ino`, upload it and open the serial monitor at 115200 baud.
+3. Open `button.ino`, upload it and open the serial monitor at 115200 baud.
 
 ## Expected Result
 

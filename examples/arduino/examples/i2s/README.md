@@ -13,7 +13,7 @@ Initializes the on-board ES8389 codec and forwards the two differential micropho
 
 ## How to Run
 
-1. Install any libraries the sketch includes.
+1. Install sp32 by Espressif Systems **3.3.12** and any libraries the sketch includes.
 2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |

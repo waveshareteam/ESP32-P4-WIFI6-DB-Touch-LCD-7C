@@ -13,7 +13,7 @@ Bridges the USB serial port and the on-board RS485 transceiver in half duplex. T
 
 ## How to Run
 
-1. Install any libraries the sketch includes.
+1. Install sp32 by Espressif Systems **3.3.12** and any libraries the sketch includes.
 2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |

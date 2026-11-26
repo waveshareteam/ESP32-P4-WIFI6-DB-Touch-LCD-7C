@@ -13,7 +13,7 @@ Initializes the 7-inch EK79007 MIPI-DSI LCD (1024 × 600) with the `ESP32_Displa
 
 ## How to Run
 
-1. Install the `ESP32_Display_Panel` (`1.0.4`) and `esp-lib-utils` (`0.2.3`) libraries.
+1. Install `esp32 by Espressif Systems` **3.3.12** and the `ESP32_Display_Panel` (`1.0.4`) and `esp-lib-utils` (`0.2.3`) libraries.
 2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |

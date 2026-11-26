@@ -11,6 +11,8 @@
 #include "esp_check.h"
 #include "esp_attr.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
+#include "esp_ae_rate_cvt.h"
 #include "driver/i2s_common.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -27,17 +29,28 @@ static esp_codec_dev_handle_t record_dev_handle;
 static volatile uint32_t i2s_tx_underrun_count;
 
 static bool _is_audio_init = false;
+static bool s_capture_active = false;
+static uint32_t s_capture_rate;
+static uint32_t s_capture_bits;
 static int _vloume_intensity = CODEC_DEFAULT_VOLUME;
 /* Last output format opened on the codec, so dev_resume() restores the track's
  * sample rate instead of falling back to the default one. */
 static uint32_t _out_rate = CODEC_DEFAULT_SAMPLE_RATE;
 static uint32_t _out_bits = CODEC_DEFAULT_BIT_WIDTH;
 static i2s_slot_mode_t _out_ch = CODEC_DEFAULT_CHANNEL;
+/* Playback resampler, set while the requested rate differs from the rate the codec runs at.
+ * Guarded by audio_out_mutex like play_dev_handle. */
+#define BOARD_OUT_RESAMPLE_CHUNK_FRAMES     (512)
+static esp_ae_rate_cvt_handle_t s_out_resampler;
+static uint8_t *s_out_resample_buf;
+static uint32_t s_out_resample_buf_frames;
+static uint32_t s_out_frame_bytes;
 static SemaphoreHandle_t audio_mutex;
 static SemaphoreHandle_t audio_out_mutex;
 static SemaphoreHandle_t audio_in_mutex;
 
 static esp_err_t board_audio_lock(void);
+static void output_resampler_release(void);
 static void board_audio_unlock(void);
 static esp_err_t board_audio_output_lock(void);
 static void board_audio_output_unlock(void);
@@ -57,7 +70,7 @@ esp_err_t board_audio_player_mute(AUDIO_PLAYER_MUTE_SETTING setting)
 
     // restore the voice volume upon unmuting
     if (ret == ESP_OK && setting == AUDIO_PLAYER_UNMUTE) {
-        ret = esp_codec_dev_set_out_vol(play_dev_handle, _vloume_intensity);
+        ret = play_dev_handle ? esp_codec_dev_set_out_vol(play_dev_handle, _vloume_intensity) : ESP_ERR_INVALID_STATE;
     }
     board_audio_output_unlock();
 
@@ -167,9 +180,11 @@ static esp_err_t board_audio_deinit(void)
     // Deleting the codec devices closes them; the board manager also releases I2S, I2C and the PA GPIO.
     play_dev_handle = NULL;
     record_dev_handle = NULL;
+    output_resampler_release();
     update_codec_result(&ret, esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_AUDIO_ADC));
     update_codec_result(&ret, esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_AUDIO_DAC));
     _is_audio_init = false;
+    s_capture_active = false;
     return ret;
 }
 
@@ -256,9 +271,39 @@ esp_err_t board_i2s_write(void *audio_buffer, size_t len, size_t *bytes_written,
     ESP_RETURN_ON_FALSE(play_dev_handle && audio_buffer, ESP_ERR_INVALID_STATE, TAG, "Player is not initialized");
 
     ESP_RETURN_ON_ERROR(board_audio_write_lock(), TAG, "Lock audio output failed");
-    esp_err_t ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
-    if (ret == ESP_OK && bytes_written) {
-        *bytes_written = len;
+    esp_err_t ret = ESP_OK;
+    if (!s_out_resampler) {
+        ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
+        if (ret == ESP_OK && bytes_written) {
+            *bytes_written = len;
+        }
+        board_audio_write_unlock();
+        return ret;
+    }
+
+    // Convert in fixed chunks so the output buffer size stays bounded. The caller sees the
+    // input byte count, as if the codec ran at the stream's own rate.
+    const uint8_t *in = (const uint8_t *)audio_buffer;
+    uint32_t frames_left = len / s_out_frame_bytes;
+    size_t consumed = 0;
+    while (frames_left > 0 && ret == ESP_OK) {
+        uint32_t in_frames = frames_left > BOARD_OUT_RESAMPLE_CHUNK_FRAMES ? BOARD_OUT_RESAMPLE_CHUNK_FRAMES : frames_left;
+        uint32_t out_frames = s_out_resample_buf_frames;
+        if (esp_ae_rate_cvt_process(s_out_resampler, (esp_ae_sample_t)(in + consumed), in_frames,
+                                    (esp_ae_sample_t)s_out_resample_buf, &out_frames) != ESP_AE_ERR_OK) {
+            ret = ESP_FAIL;
+            break;
+        }
+        if (out_frames > 0) {
+            ret = esp_codec_dev_write(play_dev_handle, s_out_resample_buf, out_frames * s_out_frame_bytes);
+        }
+        if (ret == ESP_OK) {
+            consumed += in_frames * s_out_frame_bytes;
+            frames_left -= in_frames;
+        }
+    }
+    if (bytes_written) {
+        *bytes_written = consumed;
     }
     board_audio_write_unlock();
     return ret;
@@ -296,14 +341,97 @@ static bool codec_fs_supported(uint32_t rate, uint32_t bits_cfg)
     }
 }
 
+/*
+ * Rate the codec runs at for a requested playback rate. Rates outside the ES8389 table are
+ * played at the rate of the same family (11.025 kHz or 4 kHz multiples) and resampled.
+ * Returns 0 for a rate that cannot be played at all.
+ */
+static uint32_t codec_out_hw_rate(uint32_t rate)
+{
+    switch (rate) {
+    case 8000:
+    case 16000:
+    case 44100:
+    case 48000:
+        return rate;
+    case 11025:
+    case 22050:
+        return 44100;
+    case 12000:
+    case 24000:
+    case 32000:
+        return 48000;
+    default:
+        return 0;
+    }
+}
+
+/* Caller holds the output lock. */
+static void output_resampler_release(void)
+{
+    if (s_out_resampler) {
+        esp_ae_rate_cvt_close(s_out_resampler);
+        s_out_resampler = NULL;
+    }
+    if (s_out_resample_buf) {
+        heap_caps_free(s_out_resample_buf);
+        s_out_resample_buf = NULL;
+    }
+    s_out_resample_buf_frames = 0;
+    s_out_frame_bytes = 0;
+}
+
+/* Caller holds the output lock. */
+static esp_err_t output_resampler_setup(uint32_t src_rate, uint32_t dest_rate, uint32_t bits_cfg, i2s_slot_mode_t ch)
+{
+    output_resampler_release();
+    if (src_rate == dest_rate) {
+        return ESP_OK;
+    }
+
+    esp_ae_rate_cvt_cfg_t cfg = {
+        .src_rate = src_rate,
+        .dest_rate = dest_rate,
+        .channel = (uint8_t)ch,
+        .bits_per_sample = (uint8_t)bits_cfg,
+        .complexity = 2,
+        .perf_type = ESP_AE_RATE_CVT_PERF_TYPE_SPEED,
+    };
+    ESP_RETURN_ON_FALSE(esp_ae_rate_cvt_open(&cfg, &s_out_resampler) == ESP_AE_ERR_OK && s_out_resampler,
+                        ESP_FAIL, TAG, "Open playback resampler failed");
+
+    uint32_t max_out_frames = 0;
+    if (esp_ae_rate_cvt_get_max_out_sample_num(s_out_resampler, BOARD_OUT_RESAMPLE_CHUNK_FRAMES, &max_out_frames) !=
+            ESP_AE_ERR_OK || max_out_frames == 0) {
+        output_resampler_release();
+        ESP_LOGE(TAG, "Get playback resampler output size failed");
+        return ESP_FAIL;
+    }
+    s_out_frame_bytes = (uint32_t)ch * (bits_cfg / 8);
+    s_out_resample_buf = heap_caps_malloc(max_out_frames * s_out_frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_out_resample_buf) {
+        output_resampler_release();
+        ESP_LOGE(TAG, "Allocate playback resampler buffer failed");
+        return ESP_ERR_NO_MEM;
+    }
+    s_out_resample_buf_frames = max_out_frames;
+    ESP_LOGI(TAG, "Playback resampled %lu Hz -> %lu Hz", (unsigned long)src_rate, (unsigned long)dest_rate);
+    return ESP_OK;
+}
+
 esp_err_t board_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch)
 {
     ESP_RETURN_ON_FALSE(play_dev_handle && record_dev_handle, ESP_ERR_INVALID_STATE, TAG, "Codec is not initialized");
-    ESP_RETURN_ON_FALSE(codec_fs_supported(rate, bits_cfg), ESP_ERR_NOT_SUPPORTED, TAG, "ES8389 cannot clock %lu Hz / %lu-bit", (unsigned long)rate, (unsigned long)bits_cfg);
+    const uint32_t hw_rate = codec_out_hw_rate(rate);
+    ESP_RETURN_ON_FALSE(hw_rate && codec_fs_supported(hw_rate, bits_cfg), ESP_ERR_NOT_SUPPORTED, TAG,
+                        "ES8389 cannot play %lu Hz / %lu-bit", (unsigned long)rate, (unsigned long)bits_cfg);
     ESP_RETURN_ON_ERROR(board_audio_output_lock(), TAG, "Lock playback reconfiguration failed");
-    // Ordinary media/output reconfiguration must not close the ES8389 voice
-    // capture session. Voice mode uses board_codec_set_voice_fs(), which
-    // intentionally owns both sides of the shared bus.
+    // Both directions share the ES8389 and I2S clocks. Do not retune playback
+    // to a different format while capture is active.
+    if (s_capture_active && (hw_rate != s_capture_rate || bits_cfg != s_capture_bits || ch != I2S_SLOT_MODE_STEREO)) {
+        board_audio_output_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_err_t ret = board_codec_output_stop();
     if (ret != ESP_OK) {
         board_audio_output_unlock();
@@ -312,21 +440,26 @@ esp_err_t board_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t c
     }
 
     esp_codec_dev_sample_info_t output_fs = {
-        .sample_rate = rate,
+        .sample_rate = hw_rate,
         .channel = ch,
         .bits_per_sample = bits_cfg,
     };
 
-    ret = esp_codec_dev_open(play_dev_handle, &output_fs);
+    ret = output_resampler_setup(rate, hw_rate, bits_cfg, ch);
+    if (ret == ESP_OK) {
+        ret = esp_codec_dev_open(play_dev_handle, &output_fs);
+    }
     if (ret == ESP_OK) {
         ret = esp_codec_dev_set_out_mute(play_dev_handle, false);
     }
     if (ret == ESP_OK) {
+        // Keep the requested rate, so dev_resume() sets up the resampler again
         _out_rate = rate;
         _out_bits = bits_cfg;
         _out_ch = ch;
     }
     if (ret != ESP_OK) {
+        output_resampler_release();
         (void)esp_codec_dev_close(play_dev_handle);
     }
     board_audio_output_unlock();
@@ -348,26 +481,40 @@ esp_err_t board_audio_get_mic_layout(board_mic_layout_t *layout)
     const char *label = adc_cfg ? adc_cfg->codec_adc_cfg.label : NULL;
     ESP_RETURN_ON_FALSE(label && label[0] != '\0', ESP_ERR_NOT_FOUND, TAG, "audio_adc has no adc_cfg.label");
 
-    // Walk the comma-separated tokens; token i describes physical input MIC(i + 1).
-    int input = 0;
-    for (const char *token = label; ; ++input) {
-        const char *end = strchr(token, ',');
-        const size_t len = end ? (size_t)(end - token) : strlen(token);
-        ESP_RETURN_ON_FALSE(input < BOARD_MIC_MAX_NUM, ESP_ERR_INVALID_ARG, TAG,
-                            "adc_cfg.label \"%s\" has more than %d inputs", label, BOARD_MIC_MAX_NUM);
-
-        bool is_mic = false;
-        for (size_t i = 0; i < sizeof(mic_tokens) / sizeof(mic_tokens[0]) && !is_mic; i++) {
-            is_mic = len == 2 && strncmp(token, mic_tokens[i], 2) == 0;
+    // Walk the comma-separated tokens; token i describes capture slot i (up to 4 TDM slots).
+    int slot = 0;
+    for (const char *token = label; ; ++slot) {
+        while (*token == ' ' || *token == '\t') {
+            token++;
         }
-        if (is_mic) {
-            const uint8_t mic = layout->mic_num++;
-            layout->mic_channel_index[mic] = (uint8_t)input; // STD stereo: frame index == input
-            memcpy(layout->mic_label[mic], token, 2);
-            layout->mic_mask |= 1U << input;
+        const char *end = strchr(token, ',');
+        size_t len = end ? (size_t)(end - token) : strlen(token);
+        while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t')) {
+            len--;
+        }
+        ESP_RETURN_ON_FALSE(slot < 4, ESP_ERR_INVALID_ARG, TAG,
+                            "adc_cfg.label \"%s\" has more than 4 slots", label);
+
+        if ((len == 2 && strncmp(token, "RE", 2) == 0) ||
+                (len == 3 && (strncmp(token, "REF", 3) == 0 || strncmp(token, "AEC", 3) == 0))) {
+            layout->echo_ref_channel_index = (int8_t)slot;
+            layout->echo_ref_mask |= (uint16_t)(1U << slot);
+        } else if (len == 2 && strncmp(token, "NA", 2) == 0) {
+            // Unconnected TDM slot.
         } else {
-            ESP_RETURN_ON_FALSE(len == 2 && strncmp(token, "NA", 2) == 0, ESP_ERR_INVALID_ARG, TAG,
+            bool is_mic = false;
+            for (size_t i = 0; i < sizeof(mic_tokens) / sizeof(mic_tokens[0]) && !is_mic; i++) {
+                is_mic = (len == 2 && strncmp(token, mic_tokens[i], 2) == 0);
+            }
+            ESP_RETURN_ON_FALSE(is_mic, ESP_ERR_INVALID_ARG, TAG,
                                 "Unknown token in adc_cfg.label \"%s\"", label);
+            ESP_RETURN_ON_FALSE(layout->mic_num < BOARD_MIC_MAX_NUM, ESP_ERR_INVALID_ARG, TAG,
+                                "adc_cfg.label \"%s\" has more than %d microphones", label, BOARD_MIC_MAX_NUM);
+            const uint8_t mic = layout->mic_num++;
+            layout->mic_channel_index[mic] = (uint8_t)slot;
+            memcpy(layout->mic_label[mic], token, 2);
+            layout->mic_label[mic][2] = '\0';
+            layout->mic_mask |= (uint16_t)(1U << slot);
         }
 
         if (!end) {
@@ -394,6 +541,8 @@ esp_err_t board_codec_set_voice_fs(uint32_t rate, uint32_t bits_cfg)
         ESP_LOGE(TAG, "Close codec devices failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    // Voice playback writes at the codec rate, no resampling
+    output_resampler_release();
 
     esp_codec_dev_sample_info_t output_fs = {
         .sample_rate = rate,
@@ -422,6 +571,13 @@ esp_err_t board_codec_set_voice_fs(uint32_t rate, uint32_t bits_cfg)
     }
     if (ret != ESP_OK) {
         (void)board_codec_dev_stop();
+    } else {
+        s_capture_active = true;
+        s_capture_rate = rate;
+        s_capture_bits = bits_cfg;
+        _out_rate = rate;
+        _out_bits = bits_cfg;
+        _out_ch = I2S_SLOT_MODE_STEREO;
     }
     board_audio_unlock();
     return ret;
@@ -429,10 +585,19 @@ esp_err_t board_codec_set_voice_fs(uint32_t rate, uint32_t bits_cfg)
 
 esp_err_t board_codec_volume_set(int volume, int *volume_set)
 {
-    (void)volume_set;
+    if (volume < 0) {
+        volume = 0;
+    } else if (volume > 100) {
+        volume = 100;
+    }
     ESP_RETURN_ON_ERROR(board_audio_output_lock(), TAG, "Lock codec volume failed");
-    _vloume_intensity = volume;
-    esp_err_t ret = esp_codec_dev_set_out_vol(play_dev_handle, volume);
+    esp_err_t ret = play_dev_handle ? esp_codec_dev_set_out_vol(play_dev_handle, volume) : ESP_ERR_INVALID_STATE;
+    if (ret == ESP_OK) {
+        _vloume_intensity = volume;
+        if (volume_set != NULL) {
+            *volume_set = volume;
+        }
+    }
     board_audio_output_unlock();
     ESP_RETURN_ON_ERROR(ret, TAG, "Set Codec volume failed");
 
@@ -460,11 +625,16 @@ esp_err_t board_codec_dev_stop(void)
     esp_err_t ret = ESP_OK;
 
     if (record_dev_handle) {
-        update_codec_result(&ret, esp_codec_dev_close(record_dev_handle));
+        esp_err_t input_ret = esp_codec_dev_close(record_dev_handle);
+        if (input_ret == ESP_OK) {
+            s_capture_active = false;
+        }
+        update_codec_result(&ret, input_ret);
     }
     if (play_dev_handle) {
         update_codec_result(&ret, esp_codec_dev_close(play_dev_handle));
     }
+    output_resampler_release();
 
     board_audio_unlock();
     return ret;

@@ -882,15 +882,33 @@ void UartTool::loadConfigToWidgets()
 
 void UartTool::applyConfig()
 {
-    UartToolConfig new_config = _config;
-    new_config.baud = baud_values[lv_dropdown_get_selected(_baud_dropdown)];
-    new_config.data_bits = static_cast<uart_word_length_t>(
-        UART_DATA_5_BITS + lv_dropdown_get_selected(_data_dropdown)
-    );
+    if (_baud_dropdown == nullptr || _data_dropdown == nullptr ||
+        _stop_dropdown == nullptr || _parity_dropdown == nullptr) {
+        return;
+    }
+
+    const uint32_t baud_idx = lv_dropdown_get_selected(_baud_dropdown);
+    const uint32_t data_idx = lv_dropdown_get_selected(_data_dropdown);
+    const uint32_t stop_idx = lv_dropdown_get_selected(_stop_dropdown);
+    const uint32_t parity_idx = lv_dropdown_get_selected(_parity_dropdown);
+
     static const uart_stop_bits_t stop_map[] = {UART_STOP_BITS_1, UART_STOP_BITS_1_5, UART_STOP_BITS_2};
-    new_config.stop_bits = stop_map[lv_dropdown_get_selected(_stop_dropdown)];
     static const uart_parity_t parity_map[] = {UART_PARITY_DISABLE, UART_PARITY_EVEN, UART_PARITY_ODD};
-    new_config.parity = parity_map[lv_dropdown_get_selected(_parity_dropdown)];
+    constexpr size_t BAUD_COUNT = sizeof(baud_values) / sizeof(baud_values[0]);
+    constexpr size_t STOP_COUNT = sizeof(stop_map) / sizeof(stop_map[0]);
+    constexpr size_t PARITY_COUNT = sizeof(parity_map) / sizeof(parity_map[0]);
+
+    if (baud_idx >= BAUD_COUNT || data_idx >= 4 ||
+        stop_idx >= STOP_COUNT || parity_idx >= PARITY_COUNT) {
+        setStatus("Bad config", COLOR_ERROR);
+        return;
+    }
+
+    UartToolConfig new_config = _config;
+    new_config.baud = baud_values[baud_idx];
+    new_config.data_bits = static_cast<uart_word_length_t>(UART_DATA_5_BITS + data_idx);
+    new_config.stop_bits = stop_map[stop_idx];
+    new_config.parity = parity_map[parity_idx];
 
     if (!commitConfig(new_config)) {
         loadConfigToWidgets();
@@ -1261,6 +1279,11 @@ bool UartTool::back(void)
 bool UartTool::close(void)
 {
     ESP_UTILS_LOGD("Close(@0x%p)", this);
+    lv_async_call_cancel(layout_update_async_cb, this);
+    _layout_update_pending = false;
+    if (_rx_timer != nullptr) {
+        lv_timer_pause(_rx_timer);
+    }
     return true;
 }
 

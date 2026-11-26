@@ -86,6 +86,7 @@ static esp_wifi_service_t *s_wifi_service;
 static adf_event_hub_t s_wifi_event_hub;
 static SemaphoreHandle_t s_wifi_lock;
 static bool s_wifi_enabled;
+static bool s_link_events_subscribed;
 static board_wifi_link_t s_link;
 static portMUX_TYPE s_link_lock = portMUX_INITIALIZER_UNLOCKED;
 static board_wifi_coprocessor_info_t s_coprocessor = {
@@ -270,7 +271,10 @@ esp_err_t board_wifi_service_init(void)
     ESP_GOTO_ON_ERROR(esp_wifi_service_profile_mgr_init(&profile_cfg, &s_profile_mgr), err, TAG, "Init profile manager failed");
 
     /* Subscribe before the service starts so the first automatic connect attempt is tracked. */
-    ESP_GOTO_ON_ERROR(board_wifi_service_subscribe(ADF_EVENT_ANY_ID, wifi_link_event_handler, NULL), err, TAG, "Subscribe Wi-Fi link events failed");
+    if (!s_link_events_subscribed) {
+        ESP_GOTO_ON_ERROR(board_wifi_service_subscribe(ADF_EVENT_ANY_ID, wifi_link_event_handler, NULL), err, TAG, "Subscribe Wi-Fi link events failed");
+        s_link_events_subscribed = true;
+    }
 
     /* No provisioning agents: credentials are entered from the Settings UI. */
     esp_wifi_service_config_t cfg = {
@@ -388,19 +392,21 @@ esp_err_t board_wifi_service_set_enabled(bool enable)
     ESP_RETURN_ON_FALSE(s_wifi_service, ESP_ERR_INVALID_STATE, TAG, "Wi-Fi service is not initialized");
 
     xSemaphoreTake(s_wifi_lock, portMAX_DELAY);
-    esp_err_t ret = wifi_enable_save(enable);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Save Wi-Fi enable state failed: %s", esp_err_to_name(ret));
+    esp_err_t ret = wifi_service_apply_enabled(enable);
+    if (ret == ESP_OK) {
+        __atomic_store_n(&s_wifi_enabled, enable, __ATOMIC_RELAXED);
+        esp_err_t save_ret = wifi_enable_save(enable);
+        if (save_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Save Wi-Fi enable state failed: %s", esp_err_to_name(save_ret));
+        }
     }
-    s_wifi_enabled = enable;
-    ret = wifi_service_apply_enabled(enable);
     xSemaphoreGive(s_wifi_lock);
     return ret;
 }
 
 bool board_wifi_service_is_enabled(void)
 {
-    return s_wifi_enabled;
+    return __atomic_load_n(&s_wifi_enabled, __ATOMIC_RELAXED);
 }
 
 void board_wifi_service_get_link(board_wifi_link_t *link)
@@ -425,4 +431,14 @@ bool board_wifi_service_is_connected(void)
     }
     esp_netif_ip_info_t info = {0};
     return esp_netif_get_ip_info(netif, &info) == ESP_OK && info.ip.addr != 0;
+}
+
+esp_err_t board_wifi_disconnect(void)
+{
+    return esp_wifi_disconnect();
+}
+
+esp_err_t board_wifi_set_low_latency(bool enable)
+{
+    return esp_wifi_set_ps(enable ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
 }

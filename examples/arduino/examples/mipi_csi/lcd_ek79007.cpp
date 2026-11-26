@@ -52,6 +52,12 @@ static const lcd_init_command_t ek79007_init_commands[] = {
 };
 
 static esp_ldo_channel_handle_t dsi_phy_ldo = nullptr;
+static constexpr int lcd_rst_pin = 31;
+static constexpr bool lcd_rst_active_high = false;
+static constexpr int lcd_bl_pin = 30;
+static constexpr int lcd_bl_on_level = LOW;
+static constexpr int lcd_bl_off_level = HIGH;
+
 static esp_lcd_dsi_bus_handle_t dsi_bus = nullptr;
 static esp_lcd_panel_io_handle_t dbi_io = nullptr;
 static esp_lcd_panel_handle_t lcd_panel = nullptr;
@@ -66,16 +72,16 @@ static esp_err_t report_error(const char *operation, esp_err_t err)
 
 static void set_backlight(bool enabled)
 {
-  pinMode(LCD_BL, OUTPUT);
-  digitalWrite(LCD_BL, enabled ? LCD_BL_ON_LEVEL : LCD_BL_OFF_LEVEL);
+  pinMode(lcd_bl_pin, OUTPUT);
+  digitalWrite(lcd_bl_pin, enabled ? lcd_bl_on_level : lcd_bl_off_level);
 }
 
 static void reset_lcd()
 {
-  pinMode(LCD_RST, OUTPUT);
-  digitalWrite(LCD_RST, LCD_RST_ACTIVE_HIGH);
+  pinMode(lcd_rst_pin, OUTPUT);
+  digitalWrite(lcd_rst_pin, lcd_rst_active_high);
   delay(10);
-  digitalWrite(LCD_RST, !LCD_RST_ACTIVE_HIGH);
+  digitalWrite(lcd_rst_pin, !lcd_rst_active_high);
   delay(20);
 }
 

@@ -170,9 +170,13 @@ namespace esp_brookesia::apps
             // Remember whether music was running so resume() can continue it.
             _resume_playback = (audio_player_get_state() == AUDIO_PLAYER_STATE_PLAYING);
 
-            esp_err_t pause_ret = audio_player_pause();
-            if (pause_ret != ESP_OK && pause_ret != ESP_ERR_INVALID_STATE) {
-                ESP_LOGW(TAG, "Pause audio player failed: %s", esp_err_to_name(pause_ret));
+            if (_ui_active) {
+                lv_demo_music_pause();
+            } else {
+                esp_err_t pause_ret = audio_player_pause();
+                if (pause_ret != ESP_OK && pause_ret != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG, "Pause audio player failed: %s", esp_err_to_name(pause_ret));
+                }
             }
 
             // Close the ES8389 playback and record devices so the next app that needs audio
@@ -207,10 +211,14 @@ namespace esp_brookesia::apps
         }
 
         if (_resume_playback) {
-            esp_err_t resume_ret = audio_player_resume();
-            if (resume_ret != ESP_OK && resume_ret != ESP_ERR_INVALID_STATE) {
-                ESP_LOGW(TAG, "Resume audio player failed: %s", esp_err_to_name(resume_ret));
-                return false;
+            if (_ui_active) {
+                lv_demo_music_resume();
+            } else {
+                esp_err_t resume_ret = audio_player_resume();
+                if (resume_ret != ESP_OK && resume_ret != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG, "Resume audio player failed: %s", esp_err_to_name(resume_ret));
+                    return false;
+                }
             }
             _resume_playback = false;
         }

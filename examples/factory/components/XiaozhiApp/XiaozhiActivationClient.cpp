@@ -17,6 +17,7 @@
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 #include "esp_hmac.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_ota_ops.h"
@@ -46,6 +47,7 @@ struct HttpContext {
     size_t response_length = 0;
     size_t response_capacity = 0;
     esp_err_t result = ESP_OK;
+    const std::atomic<bool> *cancelled = nullptr;
 };
 
 void copyString(char *destination, size_t capacity, const char *source)
@@ -64,6 +66,10 @@ esp_err_t httpEventHandler(esp_http_client_event_t *event)
 
     switch (event->event_id) {
     case HTTP_EVENT_ON_DATA: {
+        if (context->cancelled && context->cancelled->load()) {
+            context->result = ESP_ERR_INVALID_STATE;
+            return context->result;
+        }
         if (context->result != ESP_OK || !event->data || event->data_len <= 0) {
             return context->result;
         }
@@ -97,18 +103,11 @@ uint32_t responseCapacity()
 
 } // namespace
 
-XiaozhiActivationClient::XiaozhiActivationClient()
-{
-    _mutex = xSemaphoreCreateMutex();
-}
+XiaozhiActivationClient::XiaozhiActivationClient() = default;
 
 XiaozhiActivationClient::~XiaozhiActivationClient()
 {
     cancel();
-    if (_mutex) {
-        vSemaphoreDelete(_mutex);
-        _mutex = nullptr;
-    }
 }
 
 esp_err_t XiaozhiActivationClient::ensureIdentity() const
@@ -312,8 +311,11 @@ esp_err_t XiaozhiActivationClient::performPost(
     int &http_status
 )
 {
-    if (!url || !url[0] || !body || !_mutex) {
+    if (!url || !url[0] || !body) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (_cancelled.load()) {
+        return ESP_ERR_INVALID_STATE;
     }
 
     http_status = 0;
@@ -325,6 +327,7 @@ esp_err_t XiaozhiActivationClient::performPost(
     HttpContext context = {};
     context.response = response_buffer;
     context.response_capacity = capacity + 1;
+    context.cancelled = &_cancelled;
 
     esp_http_client_config_t config = {};
     config.url = url;
@@ -339,20 +342,6 @@ esp_err_t XiaozhiActivationClient::performPost(
         free(response_buffer);
         return ESP_ERR_NO_MEM;
     }
-
-    if (xSemaphoreTake(_mutex, portMAX_DELAY) != pdTRUE) {
-        esp_http_client_cleanup(client);
-        free(response_buffer);
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (_active_client) {
-        xSemaphoreGive(_mutex);
-        esp_http_client_cleanup(client);
-        free(response_buffer);
-        return ESP_ERR_INVALID_STATE;
-    }
-    _active_client = client;
-    xSemaphoreGive(_mutex);
 
     esp_err_t ret = ESP_OK;
     char activation_version[2] = {
@@ -414,9 +403,17 @@ esp_err_t XiaozhiActivationClient::performPost(
             break;
         }
 
+        if (_cancelled.load()) {
+            ret = ESP_ERR_INVALID_STATE;
+            break;
+        }
         do {
             ret = esp_http_client_perform(client);
-        } while (ret == ESP_ERR_HTTP_EAGAIN);
+        } while (ret == ESP_ERR_HTTP_EAGAIN && !_cancelled.load());
+        if (_cancelled.load()) {
+            ret = ESP_ERR_INVALID_STATE;
+            break;
+        }
         if (ret != ESP_OK) {
             break;
         }
@@ -434,12 +431,6 @@ esp_err_t XiaozhiActivationClient::performPost(
         }
     } while (false);
 
-    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
-        if (_active_client == client) {
-            _active_client = nullptr;
-        }
-        xSemaphoreGive(_mutex);
-    }
     esp_http_client_cleanup(client);
     free(response_buffer);
     return ret;
@@ -627,13 +618,12 @@ esp_err_t XiaozhiActivationClient::activate(
 
 void XiaozhiActivationClient::cancel()
 {
-    if (!_mutex || xSemaphoreTake(_mutex, portMAX_DELAY) != pdTRUE) {
-        return;
-    }
-    if (_active_client) {
-        esp_http_client_cancel_request(_active_client);
-    }
-    xSemaphoreGive(_mutex);
+    _cancelled.store(true);
+}
+
+void XiaozhiActivationClient::resetCancel()
+{
+    _cancelled.store(false);
 }
 
 } // namespace esp_brookesia::apps

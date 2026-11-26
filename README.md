@@ -77,7 +77,7 @@ The fastest way to try an example is a ready-to-flash package from the
 
 ### Arduino
 
-Follow the [board definition guide (Chinese)](examples/arduino/examples/esp32/README.md) first, then select `Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C` in the Arduino IDE.
+After installing Arduino-ESP32 `3.3.12`, select `ESP32P4 Dev Module` in the Arduino IDE (FQBN: `esp32:esp32:esp32p4:PSRAM=enabled,PartitionScheme=huge_app`), with **PSRAM** set to `Enabled` and **Partition Scheme** set to `Huge APP (3MB No OTA/1MB SPIFFS)`.
 
 | Example | Main feature |
 | --- | --- |
@@ -90,8 +90,8 @@ Follow the [board definition guide (Chinese)](examples/arduino/examples/esp32/RE
 | [rtc](examples/arduino/examples/rtc/) | PCF85063A time access |
 | [sdmmc](examples/arduino/examples/sdmmc/) | microSD file access |
 | [twai](examples/arduino/examples/twai/) | TWAI/CAN reception |
-| [uart/rs232](examples/arduino/examples/uart/rs232/) | USB serial to RS232 bridge |
-| [uart/rs485](examples/arduino/examples/uart/rs485/) | USB serial to RS485 half-duplex bridge |
+| [rs232](examples/arduino/examples/rs232/) | USB serial to RS232 bridge |
+| [rs485](examples/arduino/examples/rs485/) | USB serial to RS485 half-duplex bridge |
 
 ### Application
 

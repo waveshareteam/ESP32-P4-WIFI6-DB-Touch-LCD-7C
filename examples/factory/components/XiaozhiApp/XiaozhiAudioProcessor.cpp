@@ -24,7 +24,7 @@ constexpr char TAG[] = "XiaozhiAudio";
 // at a normal distance reaches only about -45 dBFS, too quiet for the server ASR;
 // 4.0 adds about 12 dB.
 constexpr float AFE_OUTPUT_LINEAR_GAIN = 4.0f;
-constexpr char AFE_INPUT_FORMAT[] = "MM";
+constexpr char AFE_INPUT_FORMAT[] = "MMR";
 static_assert(
     sizeof(AFE_INPUT_FORMAT) - 1 == XiaozhiAudioProcessor::INPUT_CHANNELS,
     "AFE input format must describe every fed channel"
@@ -486,9 +486,8 @@ bool XiaozhiAudioProcessor::createAfe()
         return false;
     }
 
-    // The board has no speaker loopback input, so AEC is off; BSS merges the
-    // two microphones into one output channel.
-    config->aec_init = false;
+    // Input format "MMR" supplies MIC1, MIC2, and the TDM DAC echo reference.
+    config->aec_init = true;
     config->se_init = true;
     config->ns_init = false;
     config->vad_init = true;

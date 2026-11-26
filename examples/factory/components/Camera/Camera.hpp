@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 
 #include "systems/phone/esp_brookesia_phone_app.hpp"
 #include "board.h"
@@ -87,6 +88,7 @@ namespace esp_brookesia::apps
         uint8_t _camera_bytes_per_pixel = 0;
         std::atomic<bool> _preview_running{false};
         std::atomic<bool> _preview_exited{true};
+        std::mutex _blit_mutex;
         bool _preview_desired = false;
         bool _preview_restart_pending = false;
         std::atomic<bool> _close_requested{false};

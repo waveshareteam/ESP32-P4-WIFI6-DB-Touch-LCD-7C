@@ -1,8 +1,10 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <stdio.h>
 #include <string.h>
-#include <Wire.h>
 
+static constexpr int rtc_i2c_sda_pin = 7;
+static constexpr int rtc_i2c_scl_pin = 8;
 static constexpr uint8_t rtc_i2c_address = 0x51;
 static constexpr uint8_t rtc_seconds_register = 0x04;
 static constexpr uint8_t rtc_datetime_size = 7;
@@ -33,9 +35,7 @@ static uint8_t decimal_to_bcd(uint8_t value)
 
 static uint8_t days_in_month(uint16_t year, uint8_t month)
 {
-    static constexpr uint8_t days[] = {
-        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-    };
+    static constexpr uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
     if (month == 0 || month > 12) {
         return 0;
@@ -48,26 +48,17 @@ static uint8_t days_in_month(uint16_t year, uint8_t month)
 
 static bool is_valid_datetime(const rtc_datetime_t &datetime)
 {
-    return datetime.year >= 2000 && datetime.year <= 2099 &&
-           datetime.month >= 1 && datetime.month <= 12 &&
-           datetime.day >= 1 && datetime.day <= days_in_month(datetime.year, datetime.month) &&
-           datetime.weekday <= 6 && datetime.hour <= 23 &&
-           datetime.minute <= 59 && datetime.second <= 59;
+    return datetime.year >= 2000 && datetime.year <= 2099 && datetime.month >= 1 && datetime.month <= 12 &&
+           datetime.day >= 1 && datetime.day <= days_in_month(datetime.year, datetime.month) && datetime.weekday <= 6 &&
+           datetime.hour <= 23 && datetime.minute <= 59 && datetime.second <= 59;
 }
 
 static void print_datetime(const char *label, const rtc_datetime_t &datetime)
 {
-    Serial.printf(
-        "%s: %04u-%02u-%02u weekday=%u %02u:%02u:%02u\n",
-        label,
-        static_cast<unsigned>(datetime.year),
-        static_cast<unsigned>(datetime.month),
-        static_cast<unsigned>(datetime.day),
-        static_cast<unsigned>(datetime.weekday),
-        static_cast<unsigned>(datetime.hour),
-        static_cast<unsigned>(datetime.minute),
-        static_cast<unsigned>(datetime.second)
-    );
+    Serial.printf("%s: %04u-%02u-%02u weekday=%u %02u:%02u:%02u\n", label, static_cast<unsigned>(datetime.year),
+                  static_cast<unsigned>(datetime.month), static_cast<unsigned>(datetime.day),
+                  static_cast<unsigned>(datetime.weekday), static_cast<unsigned>(datetime.hour),
+                  static_cast<unsigned>(datetime.minute), static_cast<unsigned>(datetime.second));
 }
 
 static bool read_datetime(rtc_datetime_t &datetime, bool &oscillator_stopped)
@@ -126,14 +117,10 @@ static uint8_t month_from_text(const char *month_text)
 
 static uint8_t calculate_weekday(uint16_t year, uint8_t month, uint8_t day)
 {
-    static constexpr uint8_t days_before_month[] = {
-        0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4
-    };
+    static constexpr uint8_t days_before_month[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
     const uint16_t adjusted_year = year - (month < 3 ? 1 : 0);
-    return static_cast<uint8_t>(
-        (adjusted_year + adjusted_year / 4 - adjusted_year / 100 +
-         adjusted_year / 400 + days_before_month[month - 1] + day) % 7
-    );
+    return static_cast<uint8_t>((adjusted_year + adjusted_year / 4 - adjusted_year / 100 + adjusted_year / 400 +
+                                 days_before_month[month - 1] + day) % 7);
 }
 
 static rtc_datetime_t build_datetime(void)
@@ -159,9 +146,9 @@ void setup()
     delay(500);
 
     Serial.println("PCF85063A RTC Arduino example");
-    Serial.printf("I2C SDA: GPIO%u, SCL: GPIO%u, address: 0x%02X\n", SDA, SCL, rtc_i2c_address);
+    Serial.printf("I2C SDA: GPIO%d, SCL: GPIO%d, address: 0x%02X\n", rtc_i2c_sda_pin, rtc_i2c_scl_pin, rtc_i2c_address);
 
-    Wire.begin(SDA, SCL);
+    Wire.begin(rtc_i2c_sda_pin, rtc_i2c_scl_pin);
     Wire.setClock(rtc_i2c_frequency);
 
     if (rtc_set_time_on_boot) {

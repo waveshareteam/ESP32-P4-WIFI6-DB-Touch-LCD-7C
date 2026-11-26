@@ -1417,22 +1417,23 @@ void CanTool::createSettingsOverlay(lv_obj_t *parent)
     make_label(
         pin_info, "Fixed board routing", &lv_font_montserrat_20, COLOR_TEXT_MUTED
     );
+    const CanToolPins pins = can_tool_get_pins();
     char pin_text[48];
-    const char *tx_text = CAN_TOOL_TX_GPIO == GPIO_NUM_NC ? "NC" : nullptr;
-    const char *rx_text = CAN_TOOL_RX_GPIO == GPIO_NUM_NC ? "NC" : nullptr;
+    const char *tx_text = pins.tx == GPIO_NUM_NC ? "NC" : nullptr;
+    const char *rx_text = pins.rx == GPIO_NUM_NC ? "NC" : nullptr;
     char tx_gpio_text[12];
     char rx_gpio_text[12];
     if (tx_text == nullptr) {
         snprintf(
             tx_gpio_text, sizeof(tx_gpio_text), "GPIO%d",
-            static_cast<int>(CAN_TOOL_TX_GPIO)
+            static_cast<int>(pins.tx)
         );
         tx_text = tx_gpio_text;
     }
     if (rx_text == nullptr) {
         snprintf(
             rx_gpio_text, sizeof(rx_gpio_text), "GPIO%d",
-            static_cast<int>(CAN_TOOL_RX_GPIO)
+            static_cast<int>(pins.rx)
         );
         rx_text = rx_gpio_text;
     }

@@ -28,10 +28,11 @@ namespace esp_brookesia::apps
         ~Settings();
         bool run(void) override;
         void showRootPage();
+        static void showRootPageAsync();
         /** Space every Settings page leaves at the top for the floating status bar. */
         lv_coord_t getContentTopInset();
-        i2c_master_bus_handle_t i2c_bus_handle;
-        i2c_master_dev_handle_t pmu_dev_handle;
+        i2c_master_bus_handle_t i2c_bus_handle = nullptr;
+        i2c_master_dev_handle_t pmu_dev_handle = nullptr;
         static int pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len);
         static int pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len);
 
@@ -57,6 +58,7 @@ namespace esp_brookesia::apps
 
         static void event_handler_cb(lv_event_t *e);
         static void open_page_async_cb(void *user_data);
+        static void show_root_page_async_cb(void *user_data);
         void add_button_with_arrow(const void *icon, const char *text);
         void create_settings_ui();
         void destroy_settings_ui();
@@ -75,6 +77,7 @@ namespace esp_brookesia::apps
         lv_style_t style_list_text;
         lv_style_t style_list_btn_pressed;
         ActivePage active_page;
+        bool _is_running = false;
     };
 
 } // namespace esp_brookesia::apps

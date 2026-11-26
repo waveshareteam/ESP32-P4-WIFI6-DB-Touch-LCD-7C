@@ -44,7 +44,7 @@ constexpr AppLauncherData STYLESHEET_800_1280_DARK_APP_LAUNCHER_DATA = {
     },
     .icon = STYLESHEET_800_1280_DARK_APP_LAUNCHER_ICON_DATA,
     .flags = {
-        .enable_table_scroll_anim = 0,
+        .enable_table_scroll_anim = 1,
     },
 };
 

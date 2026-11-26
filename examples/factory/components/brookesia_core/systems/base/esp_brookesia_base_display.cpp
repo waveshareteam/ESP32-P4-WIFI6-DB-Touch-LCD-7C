@@ -3,6 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <algorithm>
+#include <cstring>
 #include "esp_brookesia_systems_internal.h"
 #include "lvgl/esp_brookesia_lv_container.hpp"
 #include "lvgl/esp_brookesia_lv_helper.hpp"
@@ -208,6 +210,10 @@ bool Display::del(void)
     _system_screen_obj = nullptr;
     _main_screen = nullptr;
     _system_screen = nullptr;
+    if (_wallpaper_draw_buf != nullptr) {
+        lv_draw_buf_destroy(_wallpaper_draw_buf);
+        _wallpaper_draw_buf = nullptr;
+    }
     _container_style_index = 0;
     _default_size_font_map.clear();
     _default_height_font_map.clear();
@@ -235,10 +241,86 @@ bool Display::updateByNewData(void)
         _main_screen_obj->setStyleAttribute(STYLE_COLOR_ITEM_BACKGROUND, _core_data.background.color),
         false, "Set main screen background color failed"
     );
+    if (_wallpaper_draw_buf != nullptr) {
+        lv_draw_buf_destroy(_wallpaper_draw_buf);
+        _wallpaper_draw_buf = nullptr;
+    }
     if (_core_data.background.wallpaper_image_resource.resource != nullptr) {
-        ESP_UTILS_CHECK_FALSE_RETURN(_main_screen_obj->setStyleAttribute(
-                                         _core_data.background.wallpaper_image_resource), false, "Set main screen wallpaper image failed"
-                                    );
+        const gui::StyleImage &wallpaper = _core_data.background.wallpaper_image_resource;
+        lv_display_t *display = _system_context.getDisplayDevice();
+        const lv_image_dsc_t *img_dsc = static_cast<const lv_image_dsc_t *>(wallpaper.resource);
+        const bool can_preconvert =
+            (display != nullptr) &&
+            (lv_display_get_color_format(display) == LV_COLOR_FORMAT_RGB565) &&
+            (img_dsc != nullptr) &&
+            (img_dsc->header.magic == LV_IMAGE_HEADER_MAGIC) &&
+            (img_dsc->data != nullptr) &&
+            (img_dsc->header.w > 0) && (img_dsc->header.h > 0) &&
+            ((img_dsc->header.cf == LV_COLOR_FORMAT_RGB888) ||
+             ((img_dsc->header.cf == LV_COLOR_FORMAT_RGB565) &&
+              ((img_dsc->header.w < screen_size.width) || (img_dsc->header.h < screen_size.height))));
+        bool applied_preconverted = false;
+        if (can_preconvert) {
+            lv_draw_buf_t *buf = lv_draw_buf_create(
+                screen_size.width, screen_size.height, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO
+            );
+            if (buf != nullptr) {
+                const uint32_t src_w = img_dsc->header.w;
+                const uint32_t src_h = img_dsc->header.h;
+                const uint32_t dst_w = static_cast<uint32_t>(screen_size.width);
+                const uint32_t dst_h = static_cast<uint32_t>(screen_size.height);
+                const uint32_t dst_stride_px = buf->header.stride / sizeof(uint16_t);
+                uint16_t *dst_px = reinterpret_cast<uint16_t *>(buf->data);
+
+                if (img_dsc->header.cf == LV_COLOR_FORMAT_RGB888) {
+                    const uint32_t src_stride_bytes =
+                        (img_dsc->header.stride > 0) ? img_dsc->header.stride : (src_w * 3);
+                    for (uint32_t y = 0; y < dst_h; y++) {
+                        const uint8_t *src_row = img_dsc->data + (y % src_h) * src_stride_bytes;
+                        uint16_t *dst_row = dst_px + y * dst_stride_px;
+                        uint32_t sx = 0;
+                        for (uint32_t x = 0; x < dst_w; x++) {
+                            const uint8_t *p = src_row + sx * 3;
+                            dst_row[x] = static_cast<uint16_t>(
+                                ((p[2] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | ((p[0] & 0xF8) >> 3)
+                            );
+                            if (++sx == src_w) {
+                                sx = 0;
+                            }
+                        }
+                    }
+                } else {
+                    const uint32_t src_stride_px =
+                        ((img_dsc->header.stride > 0) ? img_dsc->header.stride : (src_w * sizeof(uint16_t))) /
+                        sizeof(uint16_t);
+                    const uint16_t *src_px = reinterpret_cast<const uint16_t *>(img_dsc->data);
+                    for (uint32_t y = 0; y < dst_h; y++) {
+                        const uint16_t *src_row = src_px + (y % src_h) * src_stride_px;
+                        uint16_t *dst_row = dst_px + y * dst_stride_px;
+                        uint32_t x = 0;
+                        while (x < dst_w) {
+                            const uint32_t chunk = std::min(src_w, dst_w - x);
+                            memcpy(dst_row + x, src_row, chunk * sizeof(uint16_t));
+                            x += chunk;
+                        }
+                    }
+                }
+
+                lv_draw_buf_flush_cache(buf, nullptr);
+                _wallpaper_draw_buf = buf;
+                gui::StyleImage cached_wallpaper = wallpaper;
+                cached_wallpaper.resource = buf;
+                ESP_UTILS_CHECK_FALSE_RETURN(
+                    _main_screen_obj->setStyleAttribute(cached_wallpaper), false,
+                    "Set main screen wallpaper image failed"
+                );
+                applied_preconverted = true;
+            }
+        }
+        if (!applied_preconverted) {
+            ESP_UTILS_CHECK_FALSE_RETURN(_main_screen_obj->setStyleAttribute(wallpaper),
+                                         false, "Set main screen wallpaper image failed");
+        }
     }
 
     ESP_UTILS_CHECK_FALSE_RETURN(

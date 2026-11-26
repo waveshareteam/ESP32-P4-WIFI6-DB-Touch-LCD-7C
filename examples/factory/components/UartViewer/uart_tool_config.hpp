@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "board_peripherals.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
 
@@ -18,32 +19,31 @@ struct UartToolFixedPins {
     gpio_num_t direction;
 };
 
-// Fixed transceiver routing on the ESP32-P4-WIFI6-DB-Touch-LCD-7C board, matching
-// uart_485/uart_232 in the Board Manager configuration. The plain UART mode has no
-// dedicated pins on this board, so it stays unavailable (NC).
-// RS485: TX=GPIO26, RX=GPIO27, DE/RE=GPIO34 (driven as RTS in half-duplex mode).
-// RS232: TX=GPIO28, RX=GPIO29, no hardware flow control.
-constexpr UartToolFixedPins UART_TOOL_UART_PINS = {
-    GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC
-};
-constexpr UartToolFixedPins UART_TOOL_RS485_PINS = {
-    GPIO_NUM_26, GPIO_NUM_27, GPIO_NUM_34
-};
-constexpr UartToolFixedPins UART_TOOL_RS232_PINS = {
-    GPIO_NUM_28, GPIO_NUM_29, GPIO_NUM_NC
-};
-
-constexpr UartToolFixedPins uart_tool_fixed_pins(UartToolMode mode)
+// Transceiver routing comes from the board layer (esp_board_manager).
+// Plain UART mode has no dedicated pins on this board, so it stays unavailable (NC).
+inline UartToolFixedPins uart_tool_fixed_pins(UartToolMode mode)
 {
+    board_uart_info_t info = {};
+    esp_err_t ret = ESP_ERR_NOT_SUPPORTED;
     switch (mode) {
     case UartToolMode::Rs485:
-        return UART_TOOL_RS485_PINS;
+        ret = board_uart_485_get_info(&info);
+        break;
     case UartToolMode::Rs232:
-        return UART_TOOL_RS232_PINS;
+        ret = board_uart_232_get_info(&info);
+        break;
     case UartToolMode::Uart:
     default:
-        return UART_TOOL_UART_PINS;
+        return {GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC};
     }
+    if (ret != ESP_OK) {
+        return {GPIO_NUM_NC, GPIO_NUM_NC, GPIO_NUM_NC};
+    }
+    return {
+        info.tx_gpio,
+        info.rx_gpio,
+        (mode == UartToolMode::Rs485) ? info.rts_gpio : GPIO_NUM_NC,
+    };
 }
 
 constexpr const char *uart_tool_mode_name(UartToolMode mode)
@@ -59,7 +59,7 @@ constexpr const char *uart_tool_mode_name(UartToolMode mode)
     }
 }
 
-constexpr bool uart_tool_fixed_pins_ready(UartToolMode mode)
+inline bool uart_tool_fixed_pins_ready(UartToolMode mode)
 {
     const UartToolFixedPins pins = uart_tool_fixed_pins(mode);
     return (pins.tx != GPIO_NUM_NC) &&

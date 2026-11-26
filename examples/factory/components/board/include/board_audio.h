@@ -24,10 +24,10 @@ extern "C" {
 #define CODEC_VOICE_SAMPLE_RATE             (16000)
 #define CODEC_DEFAULT_BIT_WIDTH             (16)
 /* ES8389 ADC PGA gain applied to MIC1 and MIC2. */
-#define CODEC_DEFAULT_ADC_VOLUME            (24.0)
+#define CODEC_DEFAULT_ADC_VOLUME            (30.0)
 #define CODEC_DEFAULT_CHANNEL               (2)
-/* Standard I2S stereo capture: [MIC1, MIC2]. */
-#define CODEC_VOICE_INPUT_CHANNELS          (2)
+/* 4-channel TDM capture: [MIC1, MIC2, REF, NA]. */
+#define CODEC_VOICE_INPUT_CHANNELS          (4)
 #define CODEC_DEFAULT_VOLUME                (80)
 
 /* Sample indices of the two microphones inside one CODEC_VOICE_INPUT_CHANNELS-wide capture frame. */

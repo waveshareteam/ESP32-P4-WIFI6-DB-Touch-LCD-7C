@@ -328,12 +328,19 @@ void Camera::destroyCloseRequestTimer()
 
 bool Camera::requestStopPreview()
 {
-    // Called from LVGL callbacks: the worker needs the same lock while
-    // restoring dummy draw, so never wait here for it to exit.
+    // Called from LVGL callbacks: signal the worker to stop, wait only for any
+    // in-flight dummy_draw_blit to finish, and immediately restore LVGL draw.
     _preview_desired = false;
     _preview_restart_pending = false;
     _close_requested.store(false);
     _preview_running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(_blit_mutex);
+        if (_dummy_enabled && _display) {
+            esp_lv_adapter_set_dummy_draw(_display, false);
+            _dummy_enabled = false;
+        }
+    }
     return true;
 }
 
@@ -603,17 +610,23 @@ struct PreviewBox {
     lv_image_dsc_t dsc;
     void *pixels;
     lv_obj_t *box;
+    lv_timer_t *timer;
 };
 
 void previewTimerCallback(lv_timer_t *timer)
 {
     auto *holder = static_cast<PreviewBox *>(lv_timer_get_user_data(timer));
+    holder->timer = nullptr;
     lv_obj_delete(holder->box);  // its delete handler frees the holder and the pixels
 }
 
 void previewDeleteCallback(lv_event_t *event)
 {
     auto *holder = static_cast<PreviewBox *>(lv_event_get_user_data(event));
+    if (holder->timer) {
+        lv_timer_delete(holder->timer);
+        holder->timer = nullptr;
+    }
     free(holder->pixels);
     delete holder;
 }
@@ -634,6 +647,8 @@ void Camera::showCapturePreview(CapturePreview &preview)
     }
     const uint32_t stride = preview.width * (preview.color_format == LV_COLOR_FORMAT_RGB888 ? 3 : 2);
     holder->pixels = pixels;
+    holder->box = nullptr;
+    holder->timer = nullptr;
     holder->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
     holder->dsc.header.cf = preview.color_format;
     holder->dsc.header.w = preview.width;
@@ -644,6 +659,12 @@ void Camera::showCapturePreview(CapturePreview &preview)
 
     // A framed box centred on the top layer, so it sits over any app without covering the screen.
     lv_obj_t *box = lv_obj_create(lv_layer_top());
+    if (!box) {
+        board_display_unlock();
+        free(pixels);
+        delete holder;
+        return;
+    }
     holder->box = box;
     lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -656,9 +677,22 @@ void Camera::showCapturePreview(CapturePreview &preview)
     lv_obj_set_style_shadow_opa(box, LV_OPA_40, LV_PART_MAIN);
     lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
     lv_obj_t *image = lv_image_create(box);
+    if (!image) {
+        lv_obj_delete(box);
+        board_display_unlock();
+        free(pixels);
+        delete holder;
+        return;
+    }
     lv_image_set_src(image, &holder->dsc);
     lv_obj_add_event_cb(box, previewDeleteCallback, LV_EVENT_DELETE, holder);
     lv_timer_t *timer = lv_timer_create(previewTimerCallback, PREVIEW_SHOW_MS, holder);
+    if (!timer) {
+        lv_obj_delete(box);  // previewDeleteCallback frees holder and pixels
+        board_display_unlock();
+        return;
+    }
+    holder->timer = timer;
     lv_timer_set_repeat_count(timer, 1);
     board_display_unlock();
 }
@@ -846,7 +880,8 @@ esp_err_t Camera::startDummyPreview()
         static_cast<size_t>(_display_info.width) * _display_info.height * _lcd_bytes_per_pixel;
     for (int i = 0; i < _display_info.frame_buffer_num; i++) {
         memset(_lcd_buffers[i], 0, lcd_buffer_size);
-        ret = esp_cache_msync(_lcd_buffers[i], lcd_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        ret = esp_cache_msync(_lcd_buffers[i], lcd_buffer_size,
+                              ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
         if (ret != ESP_OK) {
             stopDummyPreview();
             return ret;
@@ -879,14 +914,17 @@ void Camera::stopDummyPreview()
     _touch_indev = nullptr;
     _touch_active = false;
 
-    if (_dummy_enabled && _display) {
-        esp_lv_adapter_set_dummy_draw(_display, false);
-        _dummy_enabled = false;
+    {
+        std::lock_guard<std::mutex> lock(_blit_mutex);
+        if (_dummy_enabled && _display) {
+            esp_lv_adapter_set_dummy_draw(_display, false);
+            _dummy_enabled = false;
+        }
+        _display_panel = nullptr;
+        _display = nullptr;
     }
 
     memset(_lcd_buffers, 0, sizeof(_lcd_buffers));
-    _display_panel = nullptr;
-    _display = nullptr;
     _current_lcd_buffer_index = 0;
 }
 
@@ -1000,18 +1038,21 @@ esp_err_t Camera::handleFrame()
     srm_config.mode = PPA_TRANS_MODE_BLOCKING;
 
     esp_err_t ret = ppa_do_scale_rotate_mirror(_ppa_srm_handle, &srm_config);
-    if (ret == ESP_OK && _dummy_enabled) {
-        ret = esp_lv_adapter_dummy_draw_blit(
-                  _display,
-                  0,
-                  0,
-                  display_w,
-                  display_h,
-                  _lcd_buffers[lcd_buffer_index],
-                  true
-              );
-        if (ret == ESP_OK) {
-            _current_lcd_buffer_index = lcd_buffer_index;
+    if (ret == ESP_OK) {
+        std::lock_guard<std::mutex> lock(_blit_mutex);
+        if (_preview_running.load() && _dummy_enabled && _display) {
+            ret = esp_lv_adapter_dummy_draw_blit(
+                      _display,
+                      0,
+                      0,
+                      display_w,
+                      display_h,
+                      _lcd_buffers[lcd_buffer_index],
+                      true
+                  );
+            if (ret == ESP_OK) {
+                _current_lcd_buffer_index = lcd_buffer_index;
+            }
         }
     }
 

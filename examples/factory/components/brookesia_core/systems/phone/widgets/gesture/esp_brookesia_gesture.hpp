@@ -174,10 +174,12 @@ private:
 
     struct {
         std::array<bool, static_cast<int>(Gesture::IndicatorBarType::MAX)>  is_indicator_bar_scale_back_anim_running;
+        bool is_detect_timer_idle;
     } _flags = {};
     float _direction_tan_threshold = 0;
     std::array<int, static_cast<int>(Gesture::IndicatorBarType::MAX)>  _indicator_bar_min_lengths;
     std::array<int, static_cast<int>(Gesture::IndicatorBarType::MAX)>  _indicator_bar_max_lengths;
+    mutable std::array<int, static_cast<int>(Gesture::IndicatorBarType::MAX)>  _indicator_bar_current_lengths = {};
     uint32_t _touch_start_tick = 0;
     ESP_Brookesia_LvTimer_t _detect_timer;
     ESP_Brookesia_LvObj_t _event_mask_obj;

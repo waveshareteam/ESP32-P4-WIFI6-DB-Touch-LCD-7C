@@ -17,14 +17,27 @@ enum class CanFrameFilter : int32_t {
     Extended,
 };
 
-// CAN transceiver routing comes from the board layer.
-constexpr gpio_num_t CAN_TOOL_TX_GPIO = BOARD_TWAI_TX_GPIO;
-constexpr gpio_num_t CAN_TOOL_RX_GPIO = BOARD_TWAI_RX_GPIO;
+struct CanToolPins {
+    gpio_num_t tx;
+    gpio_num_t rx;
+};
 
-constexpr bool can_tool_pins_ready()
+// CAN transceiver routing comes from the board layer at runtime.
+inline CanToolPins can_tool_get_pins()
 {
-    return CAN_TOOL_TX_GPIO != GPIO_NUM_NC &&
-           CAN_TOOL_RX_GPIO != GPIO_NUM_NC;
+    gpio_num_t tx = GPIO_NUM_NC;
+    gpio_num_t rx = GPIO_NUM_NC;
+    if (board_twai_get_pins(&tx, &rx) != ESP_OK) {
+        return {GPIO_NUM_NC, GPIO_NUM_NC};
+    }
+    return {tx, rx};
+}
+
+inline bool can_tool_pins_ready()
+{
+    const CanToolPins pins = can_tool_get_pins();
+    return pins.tx != GPIO_NUM_NC &&
+           pins.rx != GPIO_NUM_NC;
 }
 
 struct CanToolConfig {

@@ -65,9 +65,9 @@ const esp_panel_lcd_vendor_init_cmd_t lcd_init_cmd[] = {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////// Please update the following configuration according to your board spec ////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#define EXAMPLE_LCD_RST_IO          (LCD_RST)    // Set to -1 if not used
-#define EXAMPLE_LCD_BL_IO           (LCD_BL)    // Set to -1 if not used
-#define EXAMPLE_LCD_BL_ON_LEVEL     (LCD_BL_ON_LEVEL)
+#define EXAMPLE_LCD_RST_IO          (31)        // Set to -1 if not used
+#define EXAMPLE_LCD_BL_IO           (30)        // Set to -1 if not used
+#define EXAMPLE_LCD_BL_ON_LEVEL     (LOW)
 #define EXAMPLE_LCD_BL_OFF_LEVEL    (!EXAMPLE_LCD_BL_ON_LEVEL)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -91,56 +91,59 @@ static LCD *create_lcd_without_config(void)
         EXAMPLE_LCD_DPI_TIMINGS_HPW, EXAMPLE_LCD_DPI_TIMINGS_HBP, EXAMPLE_LCD_DPI_TIMINGS_HFP,
         EXAMPLE_LCD_DPI_TIMINGS_VPW, EXAMPLE_LCD_DPI_TIMINGS_VBP, EXAMPLE_LCD_DPI_TIMINGS_VFP,
         /* PHY LDO */
-        EXAMPLE_LCD_DSI_PHY_LDO_ID
-    );
+        EXAMPLE_LCD_DSI_PHY_LDO_ID);
 
     /**
      * Take `ILI9881C` as an example, the following is the actual code after macro expansion:
      *      LCD_ILI9881C(bus, 1024, 600, 16, 27);
      */
-    return new EXAMPLE_LCD_CLASS(
-        EXAMPLE_LCD_NAME, bus, EXAMPLE_LCD_WIDTH, EXAMPLE_LCD_HEIGHT, EXAMPLE_LCD_COLOR_BITS, EXAMPLE_LCD_RST_IO
-    );
+    return new EXAMPLE_LCD_CLASS(EXAMPLE_LCD_NAME, bus, EXAMPLE_LCD_WIDTH, EXAMPLE_LCD_HEIGHT, EXAMPLE_LCD_COLOR_BITS,
+                                 EXAMPLE_LCD_RST_IO);
 }
 
 static LCD *create_lcd_with_config(void)
 {
     BusDSI::Config bus_config = {
-        .host = BusDSI::HostFullConfig{
-            .bus_id = 0,
-            .num_data_lanes = EXAMPLE_LCD_DSI_LANE_NUM,
-            .phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT,
-            .lane_bit_rate_mbps = EXAMPLE_LCD_DSI_LANE_RATE_MBPS,
-        },
-        .refresh_panel = BusDSI::RefreshPanelPartialConfig{
-            .dpi_clock_freq_mhz = EXAMPLE_LCD_DPI_CLK_MHZ,
-            .bits_per_pixel = EXAMPLE_LCD_DPI_COLOR_BITS,
-            .h_size = EXAMPLE_LCD_WIDTH,
-            .v_size = EXAMPLE_LCD_HEIGHT,
-            .hsync_pulse_width = EXAMPLE_LCD_DPI_TIMINGS_HPW,
-            .hsync_back_porch = EXAMPLE_LCD_DPI_TIMINGS_HBP,
-            .hsync_front_porch = EXAMPLE_LCD_DPI_TIMINGS_HFP,
-            .vsync_pulse_width = EXAMPLE_LCD_DPI_TIMINGS_VPW,
-            .vsync_back_porch = EXAMPLE_LCD_DPI_TIMINGS_VBP,
-            .vsync_front_porch = EXAMPLE_LCD_DPI_TIMINGS_VFP,
-        },
-        .phy_ldo = BusDSI::PHY_LDO_PartialConfig{
-            .chan_id = EXAMPLE_LCD_DSI_PHY_LDO_ID,
-        },
+        .host =
+            BusDSI::HostFullConfig{
+                .bus_id = 0,
+                .num_data_lanes = EXAMPLE_LCD_DSI_LANE_NUM,
+                .phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT,
+                .lane_bit_rate_mbps = EXAMPLE_LCD_DSI_LANE_RATE_MBPS,
+            },
+        .refresh_panel =
+            BusDSI::RefreshPanelPartialConfig{
+                .dpi_clock_freq_mhz = EXAMPLE_LCD_DPI_CLK_MHZ,
+                .bits_per_pixel = EXAMPLE_LCD_DPI_COLOR_BITS,
+                .h_size = EXAMPLE_LCD_WIDTH,
+                .v_size = EXAMPLE_LCD_HEIGHT,
+                .hsync_pulse_width = EXAMPLE_LCD_DPI_TIMINGS_HPW,
+                .hsync_back_porch = EXAMPLE_LCD_DPI_TIMINGS_HBP,
+                .hsync_front_porch = EXAMPLE_LCD_DPI_TIMINGS_HFP,
+                .vsync_pulse_width = EXAMPLE_LCD_DPI_TIMINGS_VPW,
+                .vsync_back_porch = EXAMPLE_LCD_DPI_TIMINGS_VBP,
+                .vsync_front_porch = EXAMPLE_LCD_DPI_TIMINGS_VFP,
+            },
+        .phy_ldo =
+            BusDSI::PHY_LDO_PartialConfig{
+                .chan_id = EXAMPLE_LCD_DSI_PHY_LDO_ID,
+            },
     };
     LCD::Config lcd_config = {
-        .device = LCD::DevicePartialConfig{
-            .reset_gpio_num = EXAMPLE_LCD_RST_IO,
-            .bits_per_pixel = EXAMPLE_LCD_COLOR_BITS,
-        },
-        .vendor = LCD::VendorPartialConfig{
-            .hor_res = EXAMPLE_LCD_WIDTH,
-            .ver_res = EXAMPLE_LCD_HEIGHT,
+        .device =
+            LCD::DevicePartialConfig{
+                .reset_gpio_num = EXAMPLE_LCD_RST_IO,
+                .bits_per_pixel = EXAMPLE_LCD_COLOR_BITS,
+            },
+        .vendor =
+            LCD::VendorPartialConfig{
+                .hor_res = EXAMPLE_LCD_WIDTH,
+                .ver_res = EXAMPLE_LCD_HEIGHT,
 #if EXAMPLE_LCD_USE_EXTERNAL_CMD
-            .init_cmds = lcd_init_cmd,
-            .init_cmds_size = sizeof(lcd_init_cmd) / sizeof(lcd_init_cmd[0]),
+                .init_cmds = lcd_init_cmd,
+                .init_cmds_size = sizeof(lcd_init_cmd) / sizeof(lcd_init_cmd[0]),
 #endif
-        },
+            },
     };
 
     /**
@@ -153,8 +156,8 @@ static LCD *create_lcd_with_config(void)
 DRAM_ATTR static uint8_t lcd_callback_user_data = 0;
 
 #if EXAMPLE_LCD_ENABLE_PRINT_FPS
-#define EXAMPLE_LCD_PRINT_FPS_PERIOD_MS         (1000)
-#define EXAMPLE_LCD_PRINT_FPS_COUNT_MAX         (50)
+#define EXAMPLE_LCD_PRINT_FPS_PERIOD_MS (1000)
+#define EXAMPLE_LCD_PRINT_FPS_COUNT_MAX (50)
 
 DRAM_ATTR int frame_count = 0;
 DRAM_ATTR int fps = 0;
@@ -211,7 +214,7 @@ void setup()
     /* Configure bus and lcd before startup */
 #if EXAMPLE_LCD_USE_EXTERNAL_CMD && !EXAMPLE_LCD_ENABLE_CREATE_WITH_CONFIG
     // Configure external LCD initialization commands
-    lcd->configVendorCommands(lcd_init_cmd, sizeof(lcd_init_cmd)/sizeof(lcd_init_cmd[0]));
+    lcd->configVendorCommands(lcd_init_cmd, sizeof(lcd_init_cmd) / sizeof(lcd_init_cmd[0]));
 #endif
 #if EXAMPLE_LCD_ENABLE_DRAW_FINISH_CALLBACK
     // Attach a callback function which will be called when every bitmap drawing is completed

@@ -219,10 +219,8 @@ void AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
         if (icon->_flags.is_click_disable) {
             break;
         }
-        // Zoom out icon
+        // Zoom out icon without resizing the object to avoid re-running flex layout on every touch
         lv_image_set_scale(icon_image_obj, icon->_image_press_zoom);
-        lv_obj_set_size(icon_image_obj, icon->_data.image.press_size.width, icon->_data.image.press_size.height);
-        lv_obj_refr_size(icon_image_obj);
         icon->_flags.is_pressed_losted = false;
         break;
     case LV_EVENT_PRESS_LOST:
@@ -233,8 +231,6 @@ void AppLauncherIcon::onIconTouchEventCallback(lv_event_t *event)
         ESP_UTILS_LOGD("Released");
         // Zoom in icon
         lv_image_set_scale(icon_image_obj, icon->_image_default_zoom);
-        lv_obj_set_size(icon_image_obj, icon->_data.image.default_size.width, icon->_data.image.default_size.height);
-        lv_obj_refr_size(icon_image_obj);
         break;
     default:
         ESP_UTILS_CHECK_FALSE_EXIT(false, "Invalid event code(%d)", event_code);

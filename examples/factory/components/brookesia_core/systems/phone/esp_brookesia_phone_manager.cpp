@@ -621,12 +621,9 @@ bool Manager::processNavigationEvent(base::Manager::NavigateType type)
             ESP_UTILS_LOGE("Recents screen scroll to snapshot(%d) failed", _recents_screen_active_app->getId());
             ret = false;
         }
-        // Update the snapshot, need to be called after `processAppPause()`
-        for (int i = 0; i < getRunningAppCount(); i++) {
-            phone_app = static_cast<App *>(getRunningAppByIdenx(i));
-            ESP_UTILS_CHECK_FALSE_GOTO(ret = (phone_app != nullptr), end, "Invalid active app");
-
-            // Update snapshot conf and image
+        // Update the snapshot only for the just-paused active app (other background apps keep their existing snapshots)
+        if (_recents_screen_pause_app != nullptr) {
+            phone_app = static_cast<App *>(_recents_screen_pause_app);
             ESP_UTILS_CHECK_FALSE_GOTO(ret = phone_app->updateRecentsScreenSnapshotConf(getAppSnapshot(phone_app->getId())),
                                        end, "base::App update snapshot(%d) conf failed", phone_app->getId());
             ESP_UTILS_CHECK_FALSE_GOTO(ret = recents_screen->updateSnapshotImage(phone_app->getId()), end,

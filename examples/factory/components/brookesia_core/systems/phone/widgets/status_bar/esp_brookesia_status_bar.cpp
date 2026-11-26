@@ -687,7 +687,11 @@ bool StatusBar::setClock(int hour, int minute, bool is_pm) const
         lv_label_set_text_fmt(_clock_min_label.get(), "%02d", minute);
     }
     if (_clock_format == ClockFormat::FORMAT_12H) {
-        lv_label_set_text(_clock_period_label.get(), is_pm ? " PM " : " AM ");
+        const int pm_flag = is_pm ? 1 : 0;
+        if (_clock_is_pm != pm_flag) {
+            _clock_is_pm = pm_flag;
+            lv_label_set_text(_clock_period_label.get(), is_pm ? " PM " : " AM ");
+        }
     }
 
     return true;

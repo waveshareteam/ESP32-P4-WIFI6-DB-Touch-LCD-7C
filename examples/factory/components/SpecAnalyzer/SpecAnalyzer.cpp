@@ -46,6 +46,7 @@ SpecAnalyzer::SpecAnalyzer(bool use_status_bar, bool use_navigation_bar) :
     _timer(nullptr),
     _audio_task_handle(nullptr),
     _audio_task_running(false),
+    _audio_task_exited(true),
     _draw_buf(nullptr)
 {
     // Clear DSP state so the first rendered frame starts from silence.
@@ -137,7 +138,8 @@ bool SpecAnalyzer::run(void)
     }
 
     // The I2S read can block, so it runs outside the LVGL task and publishes smoothed bins.
-    _audio_task_running = true;
+    _audio_task_exited.store(false);
+    _audio_task_running.store(true);
     BaseType_t task_ret = xTaskCreatePinnedToCore(
         audio_fft_task,
         "audio_fft",
@@ -149,7 +151,8 @@ bool SpecAnalyzer::run(void)
     );
     if (task_ret != pdPASS) {
         ESP_UTILS_LOGE("Audio FFT task creation failed!");
-        _audio_task_running = false;
+        _audio_task_running.store(false);
+        _audio_task_exited.store(true);
         close();
         return false;
     }
@@ -229,6 +232,7 @@ bool SpecAnalyzer::close(void)
 {
     ESP_UTILS_LOGD("Close");
 
+    lv_async_call_cancel(mic_unavailable_async_cb, this);
     pause();
 
     if (_timer) {
@@ -264,19 +268,23 @@ bool SpecAnalyzer::pause()
         lv_timer_pause(_timer);
     }
 
-    if (_audio_task_running) {
-        _audio_task_running = false;
+    if (_audio_task_running.load() || (_audio_task_handle != nullptr && !_audio_task_exited.load())) {
+        _audio_task_running.store(false);
 
-        for (int i = 0; i < 20; i++) {
-            if (_audio_task_handle == nullptr) {
+        for (int i = 0; i < 50; i++) {
+            if (_audio_task_exited.load()) {
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
         }
 
-        if (_audio_task_handle) {
-            vTaskDelete(_audio_task_handle);
+        if (_audio_task_exited.load()) {
             _audio_task_handle = nullptr;
+        } else {
+            // Never vTaskDelete while audio_fft_task may hold board_audio_read_lock().
+            ESP_UTILS_LOGE("Audio FFT task did not exit before pause timeout");
+            setMicLabelText("Mic busy");
+            return false;
         }
     }
 
@@ -287,7 +295,8 @@ bool SpecAnalyzer::pause()
 
 bool SpecAnalyzer::resume()
 {
-    if (_audio_task_running) {
+    if (_audio_task_running.load() || (_audio_task_handle != nullptr && !_audio_task_exited.load())) {
+        _audio_task_running.store(true);
         if (_timer) {
             lv_timer_resume(_timer);
         }
@@ -307,7 +316,8 @@ bool SpecAnalyzer::resume()
         return false;
     }
 
-    _audio_task_running = true;
+    _audio_task_exited.store(false);
+    _audio_task_running.store(true);
     BaseType_t task_ret = xTaskCreatePinnedToCore(
         audio_fft_task,
         "audio_fft",
@@ -318,7 +328,8 @@ bool SpecAnalyzer::resume()
         PRO_CPU_NUM
     );
     if (task_ret != pdPASS) {
-        _audio_task_running = false;
+        _audio_task_running.store(false);
+        _audio_task_exited.store(true);
         (void)board_codec_dev_stop();
         setMicLabelText("Mic unavailable");
         return false;
@@ -331,7 +342,15 @@ bool SpecAnalyzer::resume()
     return true;
 }
 
-// Each captured stereo frame holds every input; the microphone samples come from the board layout.
+void SpecAnalyzer::mic_unavailable_async_cb(void *param)
+{
+    SpecAnalyzer *self = static_cast<SpecAnalyzer *>(param);
+    if (self && self->_canvas) {
+        self->setMicLabelText("Mic unavailable");
+    }
+}
+
+// Each captured TDM frame holds every input; the microphone samples come from the board layout.
 void SpecAnalyzer::audio_fft_task(void *pvParameters)
 {
     SpecAnalyzer *app = static_cast<SpecAnalyzer*>(pvParameters);
@@ -339,7 +358,7 @@ void SpecAnalyzer::audio_fft_task(void *pvParameters)
     constexpr size_t expected_bytes = N_SAMPLES * CAPTURE_CHANNELS * sizeof(int16_t);
     TickType_t last_slot_log_tick = xTaskGetTickCount();
 
-    while (app->_audio_task_running) {
+    while (app->_audio_task_running.load()) {
         esp_err_t ret = board_i2s_read(
             app->_raw_data,
             expected_bytes,
@@ -350,13 +369,8 @@ void SpecAnalyzer::audio_fft_task(void *pvParameters)
         if (ret != ESP_OK || bytes_read < expected_bytes) {
             if (ret == ESP_ERR_INVALID_STATE) {
                 ESP_UTILS_LOGW("I2S recorder is not available; stop spectrum capture");
-                lv_async_call([](void *param) {
-                    SpecAnalyzer *self = static_cast<SpecAnalyzer *>(param);
-                    if (self) {
-                        self->setMicLabelText("Mic unavailable");
-                    }
-                }, app);
-                app->_audio_task_running = false;
+                lv_async_call(mic_unavailable_async_cb, app);
+                app->_audio_task_running.store(false);
                 break;
             }
 
@@ -420,14 +434,17 @@ void SpecAnalyzer::audio_fft_task(void *pvParameters)
             }
 
             // Map FFT bins onto fewer visual bars and smooth the change over time.
-            for (int i = 0; i < STRIPE_COUNT; i++) {
-                int fft_idx = i * (N_SAMPLES / 2) / STRIPE_COUNT;
-                float boosted_db = app->_spectrum[ch][fft_idx] + 10.0f;
-                app->_display_spectrum[ch][i] = fmaxf(-90.0f, fminf(0.0f, boosted_db));
+            {
+                std::lock_guard<std::mutex> lock(app->_spectrum_mutex);
+                for (int i = 0; i < STRIPE_COUNT; i++) {
+                    int fft_idx = i * (N_SAMPLES / 2) / STRIPE_COUNT;
+                    float boosted_db = app->_spectrum[ch][fft_idx] + 10.0f;
+                    app->_display_spectrum[ch][i] = fmaxf(-90.0f, fminf(0.0f, boosted_db));
 
-                const float SMOOTH_FACTOR = 0.2f;
-                app->_smooth_spectrum[ch][i] = app->_smooth_spectrum[ch][i] * (1.0f - SMOOTH_FACTOR) +
-                                              app->_display_spectrum[ch][i] * SMOOTH_FACTOR;
+                    const float SMOOTH_FACTOR = 0.2f;
+                    app->_smooth_spectrum[ch][i] = app->_smooth_spectrum[ch][i] * (1.0f - SMOOTH_FACTOR) +
+                                                  app->_display_spectrum[ch][i] * SMOOTH_FACTOR;
+                }
             }
         }
 
@@ -435,6 +452,7 @@ void SpecAnalyzer::audio_fft_task(void *pvParameters)
     }
 
     app->_audio_task_handle = nullptr;
+    app->_audio_task_exited.store(true);
     vTaskDelete(NULL);
 }
 
@@ -458,13 +476,19 @@ void SpecAnalyzer::timer_cb(lv_timer_t *timer)
     const int max_bar_height = app->_canvas_height - 50;
     const int BASE_BAR_HEIGHT = 5;
 
+    float smooth_copy[MAX_MIC_COUNT][STRIPE_COUNT];
+    {
+        std::lock_guard<std::mutex> lock(app->_spectrum_mutex);
+        memcpy(smooth_copy, app->_smooth_spectrum, sizeof(smooth_copy));
+    }
+
     for (int ch = 0; ch < app->_mic_count; ch++) {
         int channel_offset_x = app->SIDE_MARGIN + ch * (app->_channel_width + app->CHANNEL_GAP) +
                                (app->_channel_width - bars_width) / 2;
 
         for (int i = 0; i < app->STRIPE_COUNT; i++) {
             // Normalize smoothed dB values from [-90, 0] to [0, 1].
-            float db = app->_smooth_spectrum[ch][i];
+            float db = smooth_copy[ch][i];
             float norm = (db + 90.0f) / 90.0f;
             norm = fmaxf(0.0f, fminf(1.0f, norm));
 
@@ -535,8 +559,10 @@ void SpecAnalyzer::timer_cb(lv_timer_t *timer)
             peak_dsc.bg_opa = LV_OPA_90;
 
             lv_area_t peak_area = {
-                .x1 = bar_x1 + 1, .y1 = peak_y - 2,
-                .x2 = bar_x2 - 1, .y2 = peak_y
+                .x1 = (bar_width > 2) ? (bar_x1 + 1) : bar_x1,
+                .y1 = peak_y - 2,
+                .x2 = (bar_width > 2) ? (bar_x2 - 1) : bar_x2,
+                .y2 = peak_y
             };
             lv_draw_rect(&layer, &peak_dsc, &peak_area);
         }

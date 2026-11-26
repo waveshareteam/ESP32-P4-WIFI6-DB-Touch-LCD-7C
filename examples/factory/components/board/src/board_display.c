@@ -8,6 +8,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/i2c_master.h"
 #include "driver/ledc.h"
@@ -29,9 +30,14 @@ static periph_ledc_handle_t *s_backlight = NULL;
 static void *s_i2c_master = NULL;
 static uint32_t s_backlight_duty_max = 0;
 static int s_brightness = 0;
+static SemaphoreHandle_t s_backlight_mutex = NULL;
 
 static esp_err_t board_backlight_init(void)
 {
+    if (!s_backlight_mutex) {
+        s_backlight_mutex = xSemaphoreCreateMutex();
+        ESP_RETURN_ON_FALSE(s_backlight_mutex, ESP_ERR_NO_MEM, TAG, "Create backlight mutex failed");
+    }
     ESP_RETURN_ON_ERROR(esp_board_manager_init_device_by_name(ESP_BOARD_DEVICE_NAME_LCD_BRIGHTNESS), TAG,
                         "Initialize lcd_brightness failed");
     ESP_RETURN_ON_ERROR(esp_board_manager_get_device_handle(ESP_BOARD_DEVICE_NAME_LCD_BRIGHTNESS, (void **)&s_backlight),
@@ -46,7 +52,7 @@ static esp_err_t board_backlight_init(void)
 
     // The LEDC peripheral applies output_invert, so a larger duty is always brighter here.
     s_backlight_duty_max = (1U << (uint32_t)ledc_cfg->duty_resolution) - 1;
-    s_brightness = (int)dev_cfg->default_percent;
+    __atomic_store_n(&s_brightness, (int)dev_cfg->default_percent, __ATOMIC_RELAXED);
     return ESP_OK;
 }
 
@@ -119,7 +125,8 @@ static lv_display_t *board_display_lvgl_init(void)
                 lcd_handles->panel_handle, lcd_handles->io_handle, lcd_cfg->lcd_width, lcd_cfg->lcd_height,
                 BOARD_DISPLAY_ROTATION);
     // board_devices.yaml allocates three DPI frame buffers, which both the triple-buffered partial
-    // mode and the adapter's rotation require.
+    // mode and the adapter's rotation require. Larger internal draw buffer cuts per-frame flush splits.
+    disp_cfg.profile.buffer_height = 100;
     disp_cfg.tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL;
     lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
     if (!disp) {
@@ -173,8 +180,11 @@ lv_display_t *board_display_start(void)
 
     // Keep the i2c_master reference for good so later devices do not tear the bus down.
     if (!s_i2c_master) {
-        ESP_RETURN_ON_FALSE(esp_board_periph_ref_handle(ESP_BOARD_PERIPH_NAME_I2C_MASTER, &s_i2c_master) == ESP_OK,
-                            NULL, TAG, "Initialize i2c_master failed");
+        if (esp_board_periph_ref_handle(ESP_BOARD_PERIPH_NAME_I2C_MASTER, &s_i2c_master) != ESP_OK) {
+            ESP_LOGE(TAG, "Initialize i2c_master failed");
+            esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_DISPLAY_LCD);
+            return NULL;
+        }
     }
 
     // Give the GT911 a few chances before running without touch; the board definition resets the controller on every attempt.
@@ -186,21 +196,29 @@ lv_display_t *board_display_start(void)
         }
         ESP_LOGW(TAG, "Initialize lcd_touch failed (attempt %d/%d)", attempt, BOARD_TOUCH_INIT_ATTEMPTS);
     }
-    if (touch_ret != ESP_OK) {
+    const bool touch_ok = (touch_ret == ESP_OK);
+    if (!touch_ok) {
         ESP_LOGW(TAG, "Initialize lcd_touch failed, continue without touch");
         board_i2c_scan();
     }
-    if (board_backlight_init() != ESP_OK) {
+    const bool backlight_ok = (board_backlight_init() == ESP_OK);
+    if (!backlight_ok) {
         ESP_LOGW(TAG, "Initialize backlight failed, brightness control unavailable");
         s_backlight = NULL;
     }
 
     s_display = board_display_lvgl_init();
     if (!s_display) {
-        esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_LCD_BRIGHTNESS);
-        esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_LCD_TOUCH);
+        if (backlight_ok) {
+            esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_LCD_BRIGHTNESS);
+        }
+        if (touch_ok) {
+            esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_LCD_TOUCH);
+        }
         esp_board_manager_deinit_device_by_name(ESP_BOARD_DEVICE_NAME_DISPLAY_LCD);
         s_backlight = NULL;
+        s_backlight_duty_max = 0;
+        __atomic_store_n(&s_brightness, 0, __ATOMIC_RELAXED);
     }
     return s_display;
 }
@@ -245,7 +263,7 @@ esp_err_t board_display_get_info(board_display_info_t *info)
 
 esp_err_t board_display_brightness_set(int brightness)
 {
-    ESP_RETURN_ON_FALSE(s_backlight, ESP_ERR_INVALID_STATE, TAG, "Backlight is not initialized");
+    ESP_RETURN_ON_FALSE(s_backlight && s_backlight_mutex, ESP_ERR_INVALID_STATE, TAG, "Backlight is not initialized");
 
     if (brightness > 100) {
         brightness = 100;
@@ -254,15 +272,22 @@ esp_err_t board_display_brightness_set(int brightness)
     }
 
     const uint32_t duty = (uint32_t)brightness * s_backlight_duty_max / 100;
-    ESP_RETURN_ON_ERROR(ledc_set_duty(s_backlight->speed_mode, s_backlight->channel, duty), TAG, "Set LEDC duty failed");
-    ESP_RETURN_ON_ERROR(ledc_update_duty(s_backlight->speed_mode, s_backlight->channel), TAG, "Update LEDC duty failed");
-    s_brightness = brightness;
+    xSemaphoreTake(s_backlight_mutex, portMAX_DELAY);
+    esp_err_t ret = ledc_set_duty(s_backlight->speed_mode, s_backlight->channel, duty);
+    if (ret == ESP_OK) {
+        ret = ledc_update_duty(s_backlight->speed_mode, s_backlight->channel);
+    }
+    if (ret == ESP_OK) {
+        __atomic_store_n(&s_brightness, brightness, __ATOMIC_RELAXED);
+    }
+    xSemaphoreGive(s_backlight_mutex);
+    ESP_RETURN_ON_ERROR(ret, TAG, "Set LEDC duty failed");
     return ESP_OK;
 }
 
 int board_display_brightness_get(void)
 {
-    return s_brightness;
+    return __atomic_load_n(&s_brightness, __ATOMIC_RELAXED);
 }
 
 esp_err_t board_display_backlight_on(void)

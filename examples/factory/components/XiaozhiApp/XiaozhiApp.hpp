@@ -130,7 +130,7 @@ private:
     static constexpr int INPUT_TASK_STACK_SIZE = 6 * 1024;
     static constexpr int ENCODER_TASK_STACK_SIZE = 40 * 1024;
     static constexpr int PLAYBACK_TASK_STACK_SIZE = 24 * 1024;
-    static constexpr size_t AFE_INPUT_CHANNELS = 2;
+    static constexpr size_t AFE_INPUT_CHANNELS = 3;
 
     static XiaozhiApp *_instance;
 
@@ -158,9 +158,6 @@ private:
     TaskHandle_t _playback_task = nullptr;
 
     esp_event_handler_instance_t _ip_event_instance = nullptr;
-    // BOOT key (GPIO35, active low) polled by a periodic timer; a press interrupts speaking.
-    esp_timer_handle_t _boot_key_timer = nullptr;
-    bool _boot_key_down = false;
 
     std::atomic<State> _state{State::NetworkRequired};
     std::atomic<ChannelState> _channel_state{ChannelState::Closed};
@@ -301,9 +298,7 @@ private:
     );
     static void uiTimerCallback(lv_timer_t *timer);
     static void uiActionCallback(void *context);
-    static void bootKeyTimerCallback(void *arg);
-    void startBootKey();
-    void stopBootKey();
+    static void bootButtonClickCallback(void *arg);
 };
 
 } // namespace esp_brookesia::apps

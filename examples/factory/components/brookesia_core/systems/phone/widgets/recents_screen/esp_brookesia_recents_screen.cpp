@@ -252,10 +252,12 @@ bool RecentsScreen::moveSnapshotY(int id, int y)
     ESP_UTILS_CHECK_FALSE_RETURN(checkInitialized(), false, "Not initialized");
     ESP_UTILS_CHECK_FALSE_RETURN(checkSnapshotExist(id), false, "Snapshot is not exist");
 
-    drag_obj = _id_snapshot_map.at(id)->getDragObj();
+    auto &snapshot = _id_snapshot_map.at(id);
+    drag_obj = snapshot->getDragObj();
     ESP_UTILS_CHECK_NULL_RETURN(drag_obj, false, "Invalid snapshot drag object");
 
     lv_obj_set_y(drag_obj, y);
+    snapshot->setCurrentY(y);
 
     return true;
 }

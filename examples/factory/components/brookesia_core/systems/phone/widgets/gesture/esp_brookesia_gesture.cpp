@@ -169,18 +169,9 @@ int Gesture::getIndicatorBarLength(Gesture::IndicatorBarType type) const
 {
     ESP_UTILS_CHECK_FALSE_RETURN(checkInitialized(), -1, "Not initialized");
     auto type_int = static_cast<int>(type);
-    ESP_UTILS_CHECK_VALUE_RETURN(type_int, 0, static_cast<int>(Gesture::IndicatorBarType::MAX), false, "Invalid indicator bar type");
+    ESP_UTILS_CHECK_VALUE_RETURN(type_int, 0, static_cast<int>(Gesture::IndicatorBarType::MAX), -1, "Invalid indicator bar type");
 
-    lv_obj_update_layout(_indicator_bars[type_int].get());
-    lv_obj_refresh_self_size(_indicator_bars[type_int].get());
-
-    if (type == Gesture::IndicatorBarType::LEFT || type == Gesture::IndicatorBarType::RIGHT) {
-        return lv_obj_get_height(_indicator_bars[type_int].get());
-    } else if (type == Gesture::IndicatorBarType::BOTTOM) {
-        return lv_obj_get_width(_indicator_bars[type_int].get());
-    }
-
-    return -1;
+    return _indicator_bar_current_lengths[type_int];
 }
 
 bool Gesture::calibrateData(const gui::StyleSize &screen_size, const base::Display &display,
@@ -268,9 +259,11 @@ bool Gesture::setIndicatorBarLength(Gesture::IndicatorBarType type, int length) 
     if (type == Gesture::IndicatorBarType::LEFT || type == Gesture::IndicatorBarType::RIGHT) {
         length = max(min(length, bar_data.main.size_max.height), bar_data.main.size_min.height);
         lv_obj_set_height(_indicator_bars[type_int].get(), length);
+        _indicator_bar_current_lengths[type_int] = length;
     } else if (type == Gesture::IndicatorBarType::BOTTOM) {
         length = max(min(length, bar_data.main.size_max.width), bar_data.main.size_min.width);
         lv_obj_set_width(_indicator_bars[type_int].get(), length);
+        _indicator_bar_current_lengths[type_int] = length;
     }
 
     return true;
@@ -311,9 +304,11 @@ bool Gesture::setIndicatorBarLengthByOffset(Gesture::IndicatorBarType type, int 
     if (type == Gesture::IndicatorBarType::LEFT || type == Gesture::IndicatorBarType::RIGHT) {
         target_len = max(target_len, (int)bar_data.main.size_min.height);
         lv_obj_set_height(_indicator_bars[type_int].get(), target_len);
+        _indicator_bar_current_lengths[type_int] = target_len;
     } else if (type == Gesture::IndicatorBarType::BOTTOM) {
         target_len = max(target_len, (int)bar_data.main.size_min.width);
         lv_obj_set_width(_indicator_bars[type_int].get(), target_len);
+        _indicator_bar_current_lengths[type_int] = target_len;
     }
 
     return true;
@@ -450,6 +445,7 @@ bool Gesture::updateByNewData(void)
         ESP_UTILS_CHECK_FALSE_RETURN(bar_range > 0, false, "Invalid bar range");
         _indicator_bar_scale_factors[i] =  (_indicator_bar_max_lengths[i] - _indicator_bar_min_lengths[i]) /
                                            (float)bar_range;
+        _indicator_bar_current_lengths[i] = _indicator_bar_max_lengths[i];
         lv_obj_align(_indicator_bars[i].get(), align, align_x_offset, align_y_offset);
     }
     // Data
@@ -476,7 +472,6 @@ void Gesture::onTouchDetectTimerCallback(struct _lv_timer_t *t)
     bool touched = false;
     int distance_x = 0;
     int distance_y = 0;
-    float distance_tan = numeric_limits<float>::infinity();
     lv_event_code_t event_code = LV_EVENT_ALL;
 
     Gesture *gesture = (Gesture *)t->user_data;
@@ -498,9 +493,20 @@ void Gesture::onTouchDetectTimerCallback(struct _lv_timer_t *t)
     info.stop_area |= (info.stop_x < data.threshold.horizontal_edge) ? Gesture::AREA_LEFT_EDGE : 0;
     info.stop_area |= ((display_w - info.stop_x) < data.threshold.horizontal_edge) ? Gesture::AREA_RIGHT_EDGE : 0;
 
-    // If not touched before and now, just ignore and return
+    // If not touched before and now, back off timer period to reduce idle polling
     if (!gesture->checkGestureStart() && !touched) {
+        if (!gesture->_flags.is_detect_timer_idle) {
+            uint32_t idle_period = (data.detect_period_ms * 3 > 60) ? (data.detect_period_ms * 3) : 60;
+            lv_timer_set_period(t, idle_period);
+            gesture->_flags.is_detect_timer_idle = true;
+        }
         return;
+    }
+
+    // Restore active polling period as soon as a touch begins
+    if (gesture->_flags.is_detect_timer_idle) {
+        lv_timer_set_period(t, data.detect_period_ms);
+        gesture->_flags.is_detect_timer_idle = false;
     }
 
     // If not touched before but touched now, it means the gesture is started
@@ -552,12 +558,8 @@ void Gesture::onTouchDetectTimerCallback(struct _lv_timer_t *t)
     info.flags.slow_speed = (info.speed_px_per_ms < data.threshold.speed_slow_px_per_ms);
 
     /* Process the direction */
-    // Calculate the tan value of the gesture
-    distance_tan = (distance_x == 0) ? numeric_limits<float>::infinity() : (float)distance_y / distance_x;
-    // Check if the tan absolute value is large enoughd
-    // if so, it means the gesture is up or down, otherwise, it's left or right
-    if ((distance_tan == numeric_limits<float>::infinity()) || (distance_tan > distance_tan_threshold) ||
-            (distance_tan < -distance_tan_threshold)) {
+    // Avoid division and atan() in the 50Hz timer callback; compare |dy| against |dx| * tan_threshold directly
+    if (abs(distance_y) > abs(distance_x) * distance_tan_threshold) {
         // Check the distance in y axis
         if (distance_y > data.threshold.direction_vertical) {
             info.direction = Gesture::DIR_DOWN;
@@ -574,7 +576,9 @@ void Gesture::onTouchDetectTimerCallback(struct _lv_timer_t *t)
     }
 
 event_process:
+#if ESP_BROOKESIA_PHONE_GESTURE_ENABLE_DEBUG_LOG
     if (gesture->checkGestureStart()) {
+        float distance_tan = (distance_x == 0) ? numeric_limits<float>::infinity() : (float)distance_y / distance_x;
         ESP_UTILS_LOGD(
             "\n\tpoint(%d,%d->%d,%d), area(%d->%d), dir(%d), distance(%.2f), angle(%d), duration(%dms), speed(%.2f),"
             "event(%d)", info.start_x, info.start_y, info.stop_x, info.stop_y, info.start_area, info.stop_area,
@@ -582,6 +586,7 @@ event_process:
             info.speed_px_per_ms, (int)event_code
         );
     }
+#endif
 
     gesture->_event_data = info;
     lv_obj_send_event(gesture->_event_mask_obj.get(), event_code, (void *)&gesture->_event_data);
@@ -606,8 +611,10 @@ void Gesture::onIndicatorBarScaleBackAnimationExecuteCallback(void *var, int32_t
 
     if (type == Gesture::IndicatorBarType::LEFT || type == Gesture::IndicatorBarType::RIGHT) {
         lv_obj_set_height(gesture->_indicator_bars[type_int].get(), value);
+        gesture->_indicator_bar_current_lengths[type_int] = value;
     } else if (type == Gesture::IndicatorBarType::BOTTOM) {
         lv_obj_set_width(gesture->_indicator_bars[type_int].get(), value);
+        gesture->_indicator_bar_current_lengths[type_int] = value;
     }
 }
 

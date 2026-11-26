@@ -76,7 +76,7 @@ ESP32-P4-WIFI6-DB-Touch-LCD-7C 以 ESP32-P4 为主控，通过 SDIO 连接 ESP32
 
 ### Arduino
 
-请先阅读[板卡文件说明](examples/arduino/examples/esp32/README_ZH.md)，然后在 Arduino IDE 中选择 `Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C`。
+安装 Arduino-ESP32 `3.3.12` 后，在 Arduino IDE 中选择 `ESP32P4 Dev Module`（FQBN：`esp32:esp32:esp32p4:PSRAM=enabled,PartitionScheme=huge_app`），并将 **PSRAM** 设为 `Enabled`、**Partition Scheme** 设为 `Huge APP (3MB No OTA/1MB SPIFFS)`。
 
 | 示例 | 主要功能 |
 | --- | --- |
@@ -89,8 +89,8 @@ ESP32-P4-WIFI6-DB-Touch-LCD-7C 以 ESP32-P4 为主控，通过 SDIO 连接 ESP32
 | [rtc](examples/arduino/examples/rtc/) | PCF85063A 时间读写 |
 | [sdmmc](examples/arduino/examples/sdmmc/) | microSD 文件读写 |
 | [twai](examples/arduino/examples/twai/) | TWAI/CAN 报文接收 |
-| [uart/rs232](examples/arduino/examples/uart/rs232/) | USB 串口与 RS232 双向桥接 |
-| [uart/rs485](examples/arduino/examples/uart/rs485/) | USB 串口与 RS485 半双工桥接 |
+| [rs232](examples/arduino/examples/rs232/) | USB 串口与 RS232 双向桥接 |
+| [rs485](examples/arduino/examples/rs485/) | USB 串口与 RS485 半双工桥接 |
 
 ### 综合应用
 

@@ -24,16 +24,16 @@
 namespace esp_brookesia::apps {
 
 /**
- * Dual-microphone WakeNet front end.
+ * Dual-microphone WakeNet + AEC front end.
  *
- * Input is 16 kHz signed 16-bit "MM" PCM: MIC1 and MIC2. The AFE runs BSS
- * (there is no echo reference, so AEC is off), and the PCM callback
- * receives its single-channel 60 ms output frame.
+ * Input is 16 kHz signed 16-bit "MMR" PCM: MIC1, MIC2, and playback echo
+ * reference. The AFE runs AEC and BSS, and the PCM callback receives its
+ * single-channel 60 ms output frame.
  */
 class XiaozhiAudioProcessor {
 public:
     static constexpr uint32_t SAMPLE_RATE = 16000;
-    static constexpr size_t INPUT_CHANNELS = 2;
+    static constexpr size_t INPUT_CHANNELS = 3;
     static constexpr size_t PCM_FRAME_SAMPLES = 960;
 
     using WakeWordCallback = std::function<void(const std::string &wake_word)>;

@@ -6,11 +6,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_board_periph.h"
-#include "periph_uart.h"
+#include "board_peripherals.h"
 #include "uart_tool_service.hpp"
 
 #define RX_CHUNK_SIZE       256
@@ -58,43 +58,34 @@ bool UartToolService::start(const UartToolConfig &config)
         _tx_queued_bytes = 0;
     }
 
-    // The Board Manager peripheral (uart_485 / uart_232) owns driver install, pins and mode.
-    const char *periph_name = (config.mode == UartToolMode::Rs485) ? "uart_485" : "uart_232";
-    periph_uart_handle_t *handle = nullptr;
-    esp_err_t err = esp_board_periph_ref_handle(periph_name, reinterpret_cast<void **>(&handle));
-    if (err != ESP_OK || handle == nullptr) {
-        ESP_UTILS_LOGE("Ref %s failed: %s", periph_name, esp_err_to_name(err));
+    // The board layer owns UART driver install, pins and mode via esp_board_manager.
+    uart_port_t uart_num = UART_NUM_MAX;
+    esp_err_t err = (config.mode == UartToolMode::Rs485)
+                        ? board_uart_485_init(&uart_num)
+                        : board_uart_232_init(&uart_num);
+    if (err != ESP_OK || uart_num >= UART_NUM_MAX) {
+        ESP_UTILS_LOGE("Init %s failed: %s", uart_tool_mode_name(config.mode), esp_err_to_name(err));
         heap_caps_free(_ring);
         _ring = nullptr;
         return false;
     }
-    _periph_name = periph_name;
-    _uart_num = handle->uart_num;
+    _mode = config.mode;
+    _uart_num = uart_num;
     _driver_installed = true;
     _pins = pins;
 
-    err = uart_set_baudrate(_uart_num, config.baud);
-    if (err == ESP_OK) {
-        err = uart_set_word_length(_uart_num, config.data_bits);
-    }
-    if (err == ESP_OK) {
-        err = uart_set_parity(_uart_num, config.parity);
-    }
-    if (err == ESP_OK) {
-        err = uart_set_stop_bits(_uart_num, config.stop_bits);
-    }
-    if (err == ESP_OK) {
-        err = uart_flush_input(_uart_num);
-    }
+    err = board_uart_configure(_uart_num, config.baud, config.data_bits, config.parity, config.stop_bits);
     if (err != ESP_OK) {
         ESP_UTILS_LOGE("UART format setup failed: %s", esp_err_to_name(err));
-        const esp_err_t cleanup_err = esp_board_periph_unref_handle(_periph_name);
+        const esp_err_t cleanup_err = (_mode == UartToolMode::Rs485)
+                                          ? board_uart_485_deinit()
+                                          : board_uart_232_deinit();
         if (cleanup_err == ESP_OK) {
             _driver_installed = false;
             releasePins();
         } else {
-            ESP_UTILS_LOGE("Unref %s after configuration failure failed: %s", _periph_name,
-                           esp_err_to_name(cleanup_err));
+            ESP_UTILS_LOGE("Deinit %s after configuration failure failed: %s",
+                           uart_tool_mode_name(_mode), esp_err_to_name(cleanup_err));
         }
         heap_caps_free(_ring);
         _ring = nullptr;
@@ -102,23 +93,29 @@ bool UartToolService::start(const UartToolConfig &config)
     }
 
     _exit = false;
-    {
-        esp_utils::thread_config_guard thread_config({
-            .name = "uart_tool_rx",
-            .stack_size = RX_THREAD_STACK,
-        });
-        _rx_thread = boost::thread([this]() {
-            rxThreadLoop();
-        });
-    }
-    {
-        esp_utils::thread_config_guard thread_config({
-            .name = "uart_tool_tx",
-            .stack_size = TX_THREAD_STACK,
-        });
-        _tx_thread = boost::thread([this]() {
-            txThreadLoop();
-        });
+    try {
+        {
+            esp_utils::thread_config_guard thread_config({
+                .name = "uart_tool_rx",
+                .stack_size = RX_THREAD_STACK,
+            });
+            _rx_thread = boost::thread([this]() {
+                rxThreadLoop();
+            });
+        }
+        {
+            esp_utils::thread_config_guard thread_config({
+                .name = "uart_tool_tx",
+                .stack_size = TX_THREAD_STACK,
+            });
+            _tx_thread = boost::thread([this]() {
+                txThreadLoop();
+            });
+        }
+    } catch (const std::exception &error) {
+        ESP_UTILS_LOGE("Start UART threads failed: %s", error.what());
+        stop();
+        return false;
     }
 
     _running = true;
@@ -148,7 +145,9 @@ void UartToolService::stop()
     }
     if (_driver_installed) {
         uart_wait_tx_done(_uart_num, pdMS_TO_TICKS(200));
-        const esp_err_t delete_err = esp_board_periph_unref_handle(_periph_name);
+        const esp_err_t delete_err = (_mode == UartToolMode::Rs485)
+                                         ? board_uart_485_deinit()
+                                         : board_uart_232_deinit();
         if (delete_err == ESP_OK) {
             _driver_installed = false;
             releasePins();

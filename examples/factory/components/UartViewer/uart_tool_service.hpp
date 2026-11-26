@@ -49,7 +49,7 @@ private:
     std::atomic<bool> _exit{false};
     std::atomic<bool> _running{false};
     uart_port_t _uart_num = UART_NUM_MAX;
-    const char *_periph_name = nullptr;
+    UartToolMode _mode = UartToolMode::Uart;
     bool _driver_installed = false; // GUI-thread state; retained when driver cleanup fails
     // Pins routed to UART_PORT by the last start(); released after the driver is deleted
     // so switching modes does not leave the previous transceiver connected.

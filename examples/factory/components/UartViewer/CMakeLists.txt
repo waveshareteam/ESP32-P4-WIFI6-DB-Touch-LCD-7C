@@ -7,7 +7,7 @@ file(GLOB_RECURSE PROJ_SRCS_CPP ${PROJ_SRC}/*.cpp)
 idf_component_register(
     SRCS  ${PROJ_SRCS_C} ${PROJ_SRCS_CPP}
     INCLUDE_DIRS ${PROJ_SRC}
-    REQUIRES esp_driver_uart esp_driver_gpio nvs_flash esp_board_manager brookesia_core
+    REQUIRES board esp_driver_uart esp_driver_gpio nvs_flash brookesia_core
     WHOLE_ARCHIVE)
 
 set_source_files_properties(

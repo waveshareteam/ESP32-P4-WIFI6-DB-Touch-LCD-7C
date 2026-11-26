@@ -59,13 +59,9 @@ int Manager::installApp(App *app)
     ESP_UTILS_CHECK_FALSE_GOTO(app->setVisualArea(app_visual_area), err, "App set visual area failed");
     ESP_UTILS_CHECK_FALSE_GOTO(app->calibrateVisualArea(), err, "App calibrate visual area failed");
 
-    // Keep only the launcher mutation under the LVGL lock. App hardware and
-    // resource initialization above may block while the boot UI keeps running.
-    {
-        LvLockGuard gui_guard;
-        ESP_UTILS_CHECK_FALSE_GOTO(display_process_app_installed = display.processAppInstall(app), err,
-                                   "Display process app install failed");
-    }
+    // Process display
+    ESP_UTILS_CHECK_FALSE_GOTO(display_process_app_installed = display.processAppInstall(app), err,
+                               "Display process app install failed");
 
     // Update free app id
     _app_free_id++;
@@ -73,11 +69,8 @@ int Manager::installApp(App *app)
     return app->getId();
 
 err:
-    if (display_process_app_installed) {
-        LvLockGuard gui_guard;
-        if (!display.processAppUninstall(app)) {
-            ESP_UTILS_LOGE("Display process app uninstall failed");
-        }
+    if (display_process_app_installed && !display.processAppUninstall(app)) {
+        ESP_UTILS_LOGE("Display process app uninstall failed");
     }
     if (app_installed && !app->processUninstall()) {
         ESP_UTILS_LOGE("App uninstall failed");
@@ -417,18 +410,49 @@ bool Manager::saveAppSnapshot(App *app)
     auto color_format = _system_context.getDisplayDevice()->color_format;
     snapshot_buffer = (it != _id_app_snapshot_map.end()) ? it->second : nullptr;
 
-    if ((snapshot_buffer == nullptr) || (snapshot_buffer->header.w != lv_area_get_width(&app_screen_area)) ||
-            (snapshot_buffer->header.h != lv_area_get_height(&app_screen_area))) {
+    uint32_t src_w = lv_area_get_width(&app_screen_area);
+    uint32_t src_h = lv_area_get_height(&app_screen_area);
+    bool downsample = (color_format == LV_COLOR_FORMAT_RGB565) && ((src_w >= 640) || (src_h >= 640));
+    uint32_t dst_w = downsample ? (src_w / 2) : src_w;
+    uint32_t dst_h = downsample ? (src_h / 2) : src_h;
+
+    if ((snapshot_buffer == nullptr) || (snapshot_buffer->header.w != dst_w) ||
+            (snapshot_buffer->header.h != dst_h)) {
         if (snapshot_buffer != nullptr) {
             lv_draw_buf_destroy(snapshot_buffer);
+            snapshot_buffer = nullptr;
         }
-        snapshot_buffer = lv_snapshot_create_draw_buf(app->_active_screen, color_format);
+        snapshot_buffer = lv_draw_buf_create(dst_w, dst_h, color_format, LV_STRIDE_AUTO);
         ESP_UTILS_CHECK_NULL_GOTO(snapshot_buffer, err, "Create snapshot buffer failed");
     }
 
-    // And take snapshot for recent screen
-    ret = lv_snapshot_take_to_draw_buf(app->_active_screen, color_format, snapshot_buffer);
-    ESP_UTILS_CHECK_FALSE_GOTO(ret == LV_RESULT_OK, err, "Take snapshot fail");
+    if (downsample) {
+        lv_draw_buf_t *full_buffer = lv_snapshot_create_draw_buf(app->_active_screen, color_format);
+        ESP_UTILS_CHECK_NULL_GOTO(full_buffer, err, "Create full snapshot buffer failed");
+        ret = lv_snapshot_take_to_draw_buf(app->_active_screen, color_format, full_buffer);
+        if (ret != LV_RESULT_OK) {
+            lv_draw_buf_destroy(full_buffer);
+            ESP_UTILS_CHECK_FALSE_GOTO(false, err, "Take snapshot fail");
+        }
+        const uint32_t src_stride = full_buffer->header.stride / sizeof(uint16_t);
+        const uint32_t dst_stride = snapshot_buffer->header.stride / sizeof(uint16_t);
+        const uint16_t *src_row = reinterpret_cast<const uint16_t *>(full_buffer->data);
+        uint16_t *dst_row = reinterpret_cast<uint16_t *>(snapshot_buffer->data);
+        for (uint32_t y = 0; y < dst_h; y++) {
+            const uint16_t *s = src_row;
+            for (uint32_t x = 0; x < dst_w; x++, s += 2) {
+                dst_row[x] = *s;
+            }
+            src_row += src_stride * 2;
+            dst_row += dst_stride;
+        }
+        lv_draw_buf_flush_cache(snapshot_buffer, nullptr);
+        lv_draw_buf_destroy(full_buffer);
+    } else {
+        // And take snapshot for recent screen
+        ret = lv_snapshot_take_to_draw_buf(app->_active_screen, color_format, snapshot_buffer);
+        ESP_UTILS_CHECK_FALSE_GOTO(ret == LV_RESULT_OK, err, "Take snapshot fail");
+    }
 
     _id_app_snapshot_map[app->_id] = snapshot_buffer;
     if (resize_app_screen) {

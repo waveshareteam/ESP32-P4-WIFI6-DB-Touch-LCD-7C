@@ -155,6 +155,7 @@ private:
 
     lv_obj_t *_lv_main_screen = nullptr;
     lv_obj_t *_lv_system_screen = nullptr;
+    lv_draw_buf_t *_wallpaper_draw_buf = nullptr;
 
     esp_brookesia::gui::LvScreenUniquePtr _main_screen;
     esp_brookesia::gui::LvScreenUniquePtr _system_screen;

@@ -38,10 +38,7 @@ namespace esp_brookesia::apps
         page_root = settings_ui::create_page(lv_scr_act(), Settings::requestInstance()->getContentTopInset());
         settings_ui::create_header(page_root, "Sound", [](lv_event_t *e) {
             (void)e;
-            lv_async_call([](void *param) {
-                (void)param;
-                Settings::requestInstance()->showRootPage();
-            }, nullptr);
+            Settings::showRootPageAsync();
         });
 
         settings_ui::init_list_styles(style_list, style_list_btn, style_list_text, style_list_btn_pressed);
@@ -63,7 +60,10 @@ namespace esp_brookesia::apps
         lv_obj_set_style_text_color(title, lv_color_hex(settings_ui::COLOR_PRIMARY_TEXT), LV_PART_MAIN);
         lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
-        uint32_t value = board_codec_volume_get();
+        const int raw_volume = board_codec_volume_get();
+        uint32_t value = (raw_volume < 0)
+                             ? static_cast<uint32_t>(settings_storage::VOLUME_DEFAULT)
+                             : static_cast<uint32_t>(raw_volume);
         if (value > static_cast<uint32_t>(settings_storage::VOLUME_MAX)) {
             value = static_cast<uint32_t>(settings_storage::VOLUME_MAX);
         }
@@ -108,7 +108,10 @@ namespace esp_brookesia::apps
         if (instance->label != nullptr) {
             lv_label_set_text_fmt(instance->label, "%lu%%", static_cast<unsigned long>(value));
         }
-        board_codec_volume_set(value, nullptr);
+        const esp_err_t err = board_codec_volume_set(value, nullptr);
+        if (err != ESP_OK) {
+            ESP_UTILS_LOGW("Set codec volume failed: %s", esp_err_to_name(err));
+        }
     }
 
     bool SoundPage::back()

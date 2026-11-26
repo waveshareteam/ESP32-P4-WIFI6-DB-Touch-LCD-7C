@@ -22,14 +22,12 @@
 #include <vector>
 
 #include "board.h"
-#include "driver/gpio.h"
 #include "decoder/impl/esp_opus_dec.h"
 #include "encoder/impl/esp_opus_enc.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_timer.h"
-#include "esp_wifi.h"
 #include "esp_xiaozhi_info.h"
 #include "freertos/idf_additions.h"
 #include "sdkconfig.h"
@@ -66,28 +64,11 @@ constexpr uint32_t CONTROL_EVENT_POST_TIMEOUT_MS = 100;
 constexpr uint32_t LIFECYCLE_WAIT_MS = 10000;
 constexpr uint32_t PLAYBACK_IDLE_WAIT_MS = 1000;
 constexpr size_t CONTROL_QUEUE_LENGTH = 24;
-constexpr gpio_num_t BOOT_KEY_GPIO = GPIO_NUM_35;
-constexpr uint64_t BOOT_KEY_POLL_US = 20 * 1000;
 constexpr size_t PCM_QUEUE_LENGTH = 40;
 // The server sends TTS in bursts, ahead of real time, and packets arrive before the
 // TtsStart event switches playback on. 40 x 60 ms frames hold 2.4 s, kept in PSRAM.
 constexpr size_t PLAYBACK_QUEUE_LENGTH = 40;
 constexpr size_t DEVICE_INPUT_CHANNELS = CODEC_VOICE_INPUT_CHANNELS;
-// AFE channel i is taken from capture slot AFE_INPUT_SLOTS[i], matching the
-// processor's "MM" format: MIC1 and MIC2 (this board has no echo reference input).
-constexpr size_t AFE_INPUT_SLOTS[] = {
-    BOARD_MIC1_CHANNEL_INDEX,
-    BOARD_MIC2_CHANNEL_INDEX,
-};
-static_assert(
-    sizeof(AFE_INPUT_SLOTS) / sizeof(AFE_INPUT_SLOTS[0]) == XiaozhiAudioProcessor::INPUT_CHANNELS,
-    "Xiaozhi AFE input must be MIC1 and MIC2"
-);
-static_assert(
-    BOARD_MIC1_CHANNEL_INDEX < DEVICE_INPUT_CHANNELS &&
-        BOARD_MIC2_CHANNEL_INDEX < DEVICE_INPUT_CHANNELS,
-    "AFE input slot is outside the capture frame"
-);
 constexpr size_t INPUT_READ_FRAMES = DEVICE_AUDIO_SAMPLE_RATE / 100;
 constexpr size_t MAX_SERVER_SAMPLE_RATE = 48000;
 constexpr size_t MAX_SERVER_FRAME_DURATION_MS = 120;
@@ -136,7 +117,7 @@ void setWifiLowLatency(bool enable)
     if (low_latency == enable) {
         return;
     }
-    const esp_err_t ret = esp_wifi_set_ps(enable ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
+    const esp_err_t ret = board_wifi_set_low_latency(enable);
     if (ret != ESP_OK) {
         ESP_UTILS_LOGW("Set Wi-Fi power save failed: %s", esp_err_to_name(ret));
         return;
@@ -311,6 +292,9 @@ XiaozhiApp::~XiaozhiApp()
 bool XiaozhiApp::run()
 {
     _ready_prompt_played.store(false);
+    if (_activation_client) {
+        _activation_client->resetCancel();
+    }
     createUi();
     _visible.store(true);
     updateNetworkState();
@@ -352,11 +336,9 @@ bool XiaozhiApp::close()
     event.flag = true;
     // Ask the control task, which owns the protocol, to drop the session too.
     event.value = 1;
-    if (!postControlEvent(event, true)) {
-        return false;
-    }
+    const bool posted = postControlEvent(event, true);
     destroyUi();
-    return true;
+    return posted;
 }
 
 bool XiaozhiApp::init()
@@ -465,7 +447,9 @@ bool XiaozhiApp::init()
         setError(ESP_ERR_NO_MEM, "Create Xiaozhi control task");
         return false;
     }
-    startBootKey();
+    if (board_button_init() == ESP_OK) {
+        (void)board_button_register_boot_click_cb(bootButtonClickCallback, this);
+    }
     updateNetworkState();
     return true;
 }
@@ -549,7 +533,6 @@ bool XiaozhiApp::deinit()
         );
         _ip_event_instance = nullptr;
     }
-    stopBootKey();
 
     TickType_t post_wait_started = xTaskGetTickCount();
     while (_async_post_users.load() != 0 &&
@@ -566,6 +549,7 @@ bool XiaozhiApp::deinit()
     // semaphore and queues are deleted.
     vTaskDelay(1);
 
+    (void)board_button_register_boot_click_cb(nullptr, nullptr);
     destroyUi();
     delete _ui;
     _ui = nullptr;
@@ -627,7 +611,8 @@ bool XiaozhiApp::pause()
     ControlEvent event = {};
     event.type = ControlEventType::AppHidden;
     event.flag = true;
-    if (!postControlEvent(event, true)) {
+    const bool wait_for_ack = _chat_started.load();
+    if (!postControlEvent(event, wait_for_ack)) {
         return false;
     }
     if (_ui_timer) {
@@ -642,6 +627,9 @@ bool XiaozhiApp::resume()
         createUi();
     }
     _visible.store(true);
+    if (_activation_client) {
+        _activation_client->resetCancel();
+    }
     if (_ui_timer) {
         lv_timer_resume(_ui_timer);
     }
@@ -660,7 +648,6 @@ void XiaozhiApp::createUi()
     }
 
     lv_obj_t *screen = lv_screen_active();
-    lv_obj_clean(screen);
     lv_obj_set_style_bg_color(screen, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
@@ -683,6 +670,13 @@ void XiaozhiApp::createUi()
 
 void XiaozhiApp::destroyUi()
 {
+    if (!_ui_timer && !_page_root && (!_ui || !_ui->root())) {
+        return;
+    }
+    const bool locked = board_display_lock(-1);
+    if (!locked) {
+        ESP_UTILS_LOGW("Unable to lock LVGL while destroying Xiaozhi UI");
+    }
     if (_ui_timer) {
         lv_timer_delete(_ui_timer);
         _ui_timer = nullptr;
@@ -693,6 +687,9 @@ void XiaozhiApp::destroyUi()
     if (_page_root) {
         lv_obj_delete(_page_root);
         _page_root = nullptr;
+    }
+    if (locked) {
+        board_display_unlock();
     }
 }
 
@@ -847,7 +844,7 @@ bool XiaozhiApp::playReadyPromptOnce()
     if (_activation_prompt->playSuccess()) {
         while (!_activation_prompt->waitUntilIdle(100)) {
             if (!canPrepare()) {
-                _activation_prompt->cancel();
+                stopActivationPrompt();
                 return false;
             }
         }
@@ -1127,7 +1124,7 @@ void XiaozhiApp::handleControlEvent(const ControlEvent &event)
         }
         esp_err_t abort_ret = ESP_ERR_INVALID_STATE;
         if (_audio_tx_mutex &&
-                xSemaphoreTake(_audio_tx_mutex, portMAX_DELAY) == pdTRUE) {
+                xSemaphoreTake(_audio_tx_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             abort_ret = protocol->sendAbortSpeaking(XiaozhiClient::AbortReason::None);
             xSemaphoreGive(_audio_tx_mutex);
         }
@@ -1334,6 +1331,9 @@ void XiaozhiApp::handleControlEvent(const ControlEvent &event)
 void XiaozhiApp::handleAppVisible()
 {
     _visible.store(true);
+    if (_activation_client) {
+        _activation_client->resetCancel();
+    }
     if (!_network_ready.load() || !isNetworkReady()) {
         setState(State::NetworkRequired);
     } else if (_activation_phase == ActivationPhase::WaitingForBinding ||
@@ -1732,14 +1732,24 @@ void XiaozhiApp::destroyChat()
 
     XiaozhiClient *protocol = nullptr;
     if (_audio_tx_mutex &&
-            xSemaphoreTake(_audio_tx_mutex, portMAX_DELAY) == pdTRUE) {
+            xSemaphoreTake(_audio_tx_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         protocol = _protocol.exchange(nullptr);
         if (protocol) {
             (void)protocol->stop();
         }
         xSemaphoreGive(_audio_tx_mutex);
     } else {
+        // encodeAudio() may be blocked inside protocol->sendAudio(); stop the
+        // transport first to unblock it, then synchronize on _audio_tx_mutex
+        // before deleting protocol.
         protocol = _protocol.exchange(nullptr);
+        if (protocol) {
+            (void)protocol->stop();
+        }
+        if (_audio_tx_mutex &&
+                xSemaphoreTake(_audio_tx_mutex, pdMS_TO_TICKS(LIFECYCLE_WAIT_MS)) == pdTRUE) {
+            xSemaphoreGive(_audio_tx_mutex);
+        }
     }
     delete protocol;
 
@@ -2539,7 +2549,7 @@ void XiaozhiApp::closeChannel(bool abort_speaking)
                    channel == ChannelState::Opening)) {
         _channel_state.store(ChannelState::Closing);
         if (_audio_tx_mutex &&
-                xSemaphoreTake(_audio_tx_mutex, portMAX_DELAY) == pdTRUE) {
+                xSemaphoreTake(_audio_tx_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (abort_speaking && (_tts_active ||
                                    _state.load() == State::Speaking)) {
                 (void)protocol->sendAbortSpeaking(
@@ -2738,6 +2748,30 @@ void XiaozhiApp::inputAudio()
         AFE_INPUT_CHANNELS == XiaozhiAudioProcessor::INPUT_CHANNELS,
         "Resampler channel count must match the AFE input format"
     );
+    size_t afe_input_slots[AFE_INPUT_CHANNELS] = {0, 1, 2};
+    board_mic_layout_t mic_layout = {};
+    if (board_audio_get_mic_layout(&mic_layout) == ESP_OK &&
+            mic_layout.mic_num >= 2) {
+        if (mic_layout.mic_channel_index[0] < DEVICE_INPUT_CHANNELS &&
+                mic_layout.mic_channel_index[1] < DEVICE_INPUT_CHANNELS) {
+            afe_input_slots[0] = mic_layout.mic_channel_index[0];
+            afe_input_slots[1] = mic_layout.mic_channel_index[1];
+        } else {
+            ESP_UTILS_LOGW("Invalid board microphone slot index; falling back to slots 0, 1");
+            afe_input_slots[0] = 0;
+            afe_input_slots[1] = 1;
+        }
+        if (mic_layout.echo_ref_channel_index >= 0 &&
+                static_cast<size_t>(mic_layout.echo_ref_channel_index) < DEVICE_INPUT_CHANNELS) {
+            afe_input_slots[2] = static_cast<size_t>(mic_layout.echo_ref_channel_index);
+        } else {
+            ESP_UTILS_LOGW("Board echo reference slot unavailable; falling back to slot 2");
+            afe_input_slots[2] = 2;
+        }
+    } else {
+        ESP_UTILS_LOGW("Board dual-microphone layout unavailable; falling back to slots 0, 1, 2");
+    }
+    const size_t mic_slot = afe_input_slots[0];
     const size_t input_bytes =
         INPUT_READ_FRAMES * DEVICE_INPUT_CHANNELS * sizeof(int16_t);
     auto *device_interleaved = static_cast<int16_t *>(malloc(input_bytes));
@@ -2756,6 +2790,8 @@ void XiaozhiApp::inputAudio()
     );
     uint32_t read_failures = 0;
     uint32_t resample_failures = 0;
+    uint32_t slot_peaks[DEVICE_INPUT_CHANNELS] = {};
+    TickType_t last_peak_log_tick = xTaskGetTickCount();
     const bool input_resamplers_ready = _input_resamplers[0] != nullptr;
     if (!device_interleaved || !device_planar || !chat_planar || !afe_interleaved ||
             !input_resamplers_ready) {
@@ -2798,17 +2834,41 @@ void XiaozhiApp::inputAudio()
             for (uint32_t frame = 0; frame < input_frames; ++frame) {
                 const int16_t *slots =
                     device_interleaved + frame * DEVICE_INPUT_CHANNELS;
+                for (size_t ch = 0; ch < DEVICE_INPUT_CHANNELS; ++ch) {
+                    const int32_t ch_val = slots[ch];
+                    const uint32_t ch_mag = static_cast<uint32_t>(
+                        ch_val < 0 ? -ch_val : ch_val
+                    );
+                    if (ch_mag > slot_peaks[ch]) {
+                        slot_peaks[ch] = ch_mag;
+                    }
+                }
                 for (size_t channel = 0; channel < AFE_INPUT_CHANNELS; ++channel) {
                     device_planar[channel * INPUT_READ_FRAMES + frame] =
-                        slots[AFE_INPUT_SLOTS[channel]];
+                        slots[afe_input_slots[channel]];
                 }
-                // Level statistics track MIC1 only.
-                int32_t value = slots[BOARD_MIC1_CHANNEL_INDEX];
+                // Level statistics track the primary microphone slot.
+                int32_t value = slots[mic_slot];
                 uint32_t magnitude = static_cast<uint32_t>(
                     value < 0 ? -value : value
                 );
                 peak = magnitude > peak ? magnitude : peak;
                 absolute_sum += magnitude;
+            }
+            const TickType_t now_tick = xTaskGetTickCount();
+            if (now_tick - last_peak_log_tick >= pdMS_TO_TICKS(2000)) {
+                ESP_UTILS_LOGI(
+                    "TDM slot peaks: [0]=%lu [1]=%lu [2]=%lu [3]=%lu (map: %u,%u,%u)",
+                    static_cast<unsigned long>(slot_peaks[0]),
+                    static_cast<unsigned long>(slot_peaks[1]),
+                    static_cast<unsigned long>(DEVICE_INPUT_CHANNELS > 2 ? slot_peaks[2] : 0),
+                    static_cast<unsigned long>(DEVICE_INPUT_CHANNELS > 3 ? slot_peaks[3] : 0),
+                    static_cast<unsigned int>(afe_input_slots[0]),
+                    static_cast<unsigned int>(afe_input_slots[1]),
+                    static_cast<unsigned int>(afe_input_slots[2])
+                );
+                memset(slot_peaks, 0, sizeof(slot_peaks));
+                last_peak_log_tick = now_tick;
             }
             _input_pcm_peak.store(peak);
             _input_pcm_mean_abs.store(
@@ -2935,7 +2995,7 @@ void XiaozhiApp::encodeAudio()
         esp_err_t send_ret = ESP_OK;
         bool attempted_send = false;
         if (_audio_tx_mutex &&
-                xSemaphoreTake(_audio_tx_mutex, portMAX_DELAY) == pdTRUE) {
+                xSemaphoreTake(_audio_tx_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             XiaozhiClient *protocol = _protocol.load();
             if ((_voice_enabled.load() || _preroll_active.load()) &&
                     _uplink_ready.load() &&
@@ -3344,58 +3404,19 @@ void XiaozhiApp::uiActionCallback(void *context)
     instance->postControlEvent(event);
 }
 
-void XiaozhiApp::startBootKey()
-{
-    if (_boot_key_timer) {
-        return;
-    }
-    gpio_config_t io = {};
-    io.pin_bit_mask = 1ULL << BOOT_KEY_GPIO;
-    io.mode = GPIO_MODE_INPUT;
-    io.pull_up_en = GPIO_PULLUP_ENABLE;
-    if (gpio_config(&io) != ESP_OK) {
-        ESP_UTILS_LOGW("Configure BOOT key GPIO%d failed", static_cast<int>(BOOT_KEY_GPIO));
-        return;
-    }
-    _boot_key_down = gpio_get_level(BOOT_KEY_GPIO) == 0;
-    esp_timer_create_args_t args = {};
-    args.callback = bootKeyTimerCallback;
-    args.arg = this;
-    args.name = "xiaozhi_boot_key";
-    if (esp_timer_create(&args, &_boot_key_timer) != ESP_OK ||
-            esp_timer_start_periodic(_boot_key_timer, BOOT_KEY_POLL_US) != ESP_OK) {
-        if (_boot_key_timer) {
-            esp_timer_delete(_boot_key_timer);
-            _boot_key_timer = nullptr;
-        }
-        ESP_UTILS_LOGW("Start BOOT key polling failed");
-    }
-}
-
-void XiaozhiApp::stopBootKey()
-{
-    if (_boot_key_timer) {
-        esp_timer_stop(_boot_key_timer);
-        esp_timer_delete(_boot_key_timer);
-        _boot_key_timer = nullptr;
-    }
-}
-
-void XiaozhiApp::bootKeyTimerCallback(void *arg)
+void XiaozhiApp::bootButtonClickCallback(void *arg)
 {
     auto *instance = static_cast<XiaozhiApp *>(arg);
+    if (!instance) {
+        return;
+    }
     ScopedOptionalCounter async_user(&instance->_async_post_users);
     if (instance->_shutdown.load()) {
         return;
     }
-    // Polling every few ms is the debounce: only the press edge posts an event.
-    const bool pressed = gpio_get_level(BOOT_KEY_GPIO) == 0;
-    if (pressed && !instance->_boot_key_down) {
-        ControlEvent event = {};
-        event.type = ControlEventType::BootKey;
-        instance->postControlEvent(event);
-    }
-    instance->_boot_key_down = pressed;
+    ControlEvent event = {};
+    event.type = ControlEventType::BootKey;
+    instance->postControlEvent(event);
 }
 
 // The app is a singleton owned by itself; the registry must not delete it.

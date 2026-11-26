@@ -64,7 +64,14 @@ public:
     {
         return _origin_y;
     }
-    int getCurrentY(void) const;
+    int getCurrentY(void) const
+    {
+        return _current_y;
+    }
+    void setCurrentY(int y)
+    {
+        _current_y = y;
+    }
 
     bool updateByNewData(void);
 
@@ -74,6 +81,7 @@ private:
     const Data &_data;
 
     int _origin_y = 0;
+    int _current_y = 0;
     ESP_Brookesia_LvObj_t _main_obj;
     ESP_Brookesia_LvObj_t _drag_obj;
     ESP_Brookesia_LvObj_t _title_obj;

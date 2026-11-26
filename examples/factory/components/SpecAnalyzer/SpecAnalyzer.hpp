@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <mutex>
+
 #include "systems/phone/esp_brookesia_phone_app.hpp"
 #include "esp_dsp.h"
 #include "board.h"
@@ -29,7 +32,7 @@ namespace esp_brookesia::apps
     private:
         static SpecAnalyzer *_instance;
 
-        // Capture complete stereo voice frames; the board microphone layout says which samples are microphones.
+        // Capture complete TDM voice frames; the board microphone layout says which samples are microphones.
         static constexpr uint16_t N_SAMPLES = 1024;
         static constexpr uint16_t CAPTURE_CHANNELS = CODEC_VOICE_INPUT_CHANNELS;
         // The spectrum view has room for two channels; extra board microphones are not shown.
@@ -51,7 +54,9 @@ namespace esp_brookesia::apps
         lv_obj_t *_mic_labels[MAX_MIC_COUNT];
         lv_timer_t *_timer;
         TaskHandle_t _audio_task_handle;
-        bool _audio_task_running;
+        std::atomic<bool> _audio_task_running;
+        std::atomic<bool> _audio_task_exited;
+        std::mutex _spectrum_mutex;
 
         // Microphone visualization buffers.
         __attribute__((aligned(16))) int16_t _raw_data[N_SAMPLES * CAPTURE_CHANNELS]; // Packed microphone samples
@@ -72,5 +77,6 @@ namespace esp_brookesia::apps
 
         static void audio_fft_task(void *pvParameters);
         static void timer_cb(lv_timer_t *timer);
+        static void mic_unavailable_async_cb(void *param);
     };
 }

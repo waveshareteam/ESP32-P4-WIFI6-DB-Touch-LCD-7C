@@ -34,7 +34,7 @@ namespace esp_brookesia::apps
 {
     // Set from both the app task and the Wi-Fi service publisher task.
     static std::atomic<bool> s_time_sync_started{false};
-    static bool s_time_synced = false;
+    static std::atomic<bool> s_time_synced{false};
 
     static void time_sync_notification_cb(struct timeval *tv)
     {
@@ -150,9 +150,27 @@ namespace esp_brookesia::apps
     {
         const char *page_name = static_cast<const char *>(user_data);
         Settings *instance = Settings::requestInstance();
-        if (instance != nullptr && page_name != nullptr)
+        if (instance != nullptr && instance->_is_running && page_name != nullptr)
         {
             instance->open_page(page_name);
+        }
+    }
+
+    void Settings::show_root_page_async_cb(void *user_data)
+    {
+        Settings *instance = static_cast<Settings *>(user_data);
+        if (instance != nullptr && instance->_is_running)
+        {
+            instance->showRootPage();
+        }
+    }
+
+    void Settings::showRootPageAsync()
+    {
+        Settings *instance = Settings::requestInstance();
+        if (instance != nullptr && instance->_is_running)
+        {
+            lv_async_call(show_root_page_async_cb, instance);
         }
     }
 
@@ -255,7 +273,12 @@ namespace esp_brookesia::apps
 
     int Settings::pmu_register_read(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len)
     {
+        (void)devAddr;
         Settings *instance = Settings::requestInstance();
+        if (instance == nullptr || instance->pmu_dev_handle == nullptr || data == nullptr || len == 0)
+        {
+            return -1;
+        }
         esp_err_t ret = i2c_master_transmit_receive(instance->pmu_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
         if (ret != ESP_OK)
         {
@@ -267,12 +290,19 @@ namespace esp_brookesia::apps
 
     int Settings::pmu_register_write_byte(uint8_t devAddr, uint8_t regAddr, uint8_t *data, uint8_t len)
     {
+        (void)devAddr;
         Settings *instance = Settings::requestInstance();
+        if (instance == nullptr || instance->pmu_dev_handle == nullptr || (len > 0 && data == nullptr))
+        {
+            return -1;
+        }
         uint8_t *buffer = (uint8_t *)malloc(len + 1);
         if (!buffer)
             return -1;
         buffer[0] = regAddr;
-        memcpy(&buffer[1], data, len);
+        if (len > 0) {
+            memcpy(&buffer[1], data, len);
+        }
 
         esp_err_t ret = i2c_master_transmit(instance->pmu_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
         free(buffer);
@@ -288,6 +318,7 @@ namespace esp_brookesia::apps
     bool Settings::run(void)
     {
         ESP_UTILS_LOGD("Run");
+        _is_running = true;
         active_page = ActivePage::None;
         if (page_root == nullptr)
         {
@@ -310,6 +341,12 @@ namespace esp_brookesia::apps
     bool Settings::close(void)
     {
         ESP_UTILS_LOGD("Close");
+        _is_running = false;
+        lv_async_call_cancel(open_page_async_cb, (void *)"WLAN");
+        lv_async_call_cancel(open_page_async_cb, (void *)"Sound");
+        lv_async_call_cancel(open_page_async_cb, (void *)"Display");
+        lv_async_call_cancel(open_page_async_cb, (void *)"About");
+        lv_async_call_cancel(show_root_page_async_cb, this);
         close_active_page();
         destroy_settings_ui();
         return true;

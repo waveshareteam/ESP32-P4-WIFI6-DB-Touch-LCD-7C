@@ -349,6 +349,18 @@ void lv_demo_music_main_close(void)
     playing = false;
     pause = false;
     last_audio_state = AUDIO_PLAYER_STATE_IDLE;
+    main_cont = NULL;
+    spectrum_obj = NULL;
+    title_label = NULL;
+    artist_label = NULL;
+    genre_label = NULL;
+    time_obj = NULL;
+    album_image_obj = NULL;
+    slider_obj = NULL;
+    play_obj = NULL;
+    file_iterator = NULL;
+    spectrum = NULL;
+    spectrum_len = 0;
 }
 
 
@@ -435,9 +447,10 @@ void lv_demo_music_resume(void)
     lv_anim_start(&a);
 
     if(sec_counter_timer) lv_timer_resume(sec_counter_timer);
-    lv_slider_set_range(slider_obj, 0, lv_demo_music_get_track_length(track_id));
+    if(audio_state_timer) lv_timer_resume(audio_state_timer);
+    if(slider_obj) lv_slider_set_range(slider_obj, 0, lv_demo_music_get_track_length(track_id));
 
-    lv_obj_add_state(play_obj, LV_STATE_CHECKED);
+    if(play_obj) lv_obj_add_state(play_obj, LV_STATE_CHECKED);
     playing = true;
     pause = false;
 }
@@ -448,11 +461,18 @@ void lv_demo_music_pause(void)
     pause = true;
     spectrum_i_pause = spectrum_i;
     spectrum_i = 0;
-    lv_anim_delete(spectrum_obj, spectrum_anim_cb);
-    lv_obj_invalidate(spectrum_obj);
-    lv_image_set_scale(album_image_obj, LV_SCALE_NONE);
+    if(spectrum_obj && lv_obj_is_valid(spectrum_obj)) {
+        lv_anim_delete(spectrum_obj, spectrum_anim_cb);
+        lv_obj_invalidate(spectrum_obj);
+    }
+    if(album_image_obj && lv_obj_is_valid(album_image_obj)) {
+        lv_image_set_scale(album_image_obj, LV_SCALE_NONE);
+    }
     if(sec_counter_timer) lv_timer_pause(sec_counter_timer);
-    lv_obj_remove_state(play_obj, LV_STATE_CHECKED);
+    if(audio_state_timer) lv_timer_pause(audio_state_timer);
+    if(play_obj && lv_obj_is_valid(play_obj)) {
+        lv_obj_remove_state(play_obj, LV_STATE_CHECKED);
+    }
 
     audio_player_pause();
 }
@@ -1003,7 +1023,10 @@ static void spectrum_draw_event_cb(lv_event_t * e)
     else if(code == LV_EVENT_DELETE) {
         lv_anim_delete(NULL, start_anim_cb);
         lv_anim_delete(NULL, spectrum_anim_cb);
-        if(start_anim && stop_start_anim_timer) lv_timer_delete(stop_start_anim_timer);
+        if(start_anim && stop_start_anim_timer) {
+            lv_timer_delete(stop_start_anim_timer);
+            stop_start_anim_timer = NULL;
+        }
     }
 }
 

@@ -173,10 +173,7 @@ namespace esp_brookesia::apps
         page_root = settings_ui::create_page(lv_scr_act(), Settings::requestInstance()->getContentTopInset());
         lv_obj_t *back_btn = settings_ui::create_header(page_root, "WLAN", [](lv_event_t *e) {
             (void)e;
-            lv_async_call([](void *param) {
-                (void)param;
-                Settings::requestInstance()->showRootPage();
-            }, nullptr);
+            Settings::showRootPageAsync();
         });
 
         lv_obj_t *header = (back_btn != nullptr) ? lv_obj_get_parent(back_btn) : nullptr;

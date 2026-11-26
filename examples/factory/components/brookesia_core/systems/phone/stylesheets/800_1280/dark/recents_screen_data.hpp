@@ -11,16 +11,16 @@
 namespace esp_brookesia::systems::phone {
 
 constexpr RecentsScreenSnapshot::Data STYLESHEET_800_1280_DARK_RECENTS_SCREEN_SNAPSHOT_DATA = {
-    .main_size = gui::StyleSize::RECT(500, 860),
+    .main_size = gui::StyleSize::RECT(400, 700),
     .title = {
-        .main_size = gui::StyleSize::RECT(500, 60),
+        .main_size = gui::StyleSize::RECT(400, 60),
         .main_layout_column_pad = 10,
         .icon_size = gui::StyleSize::SQUARE(36),
         .text_font = gui::StyleFont::SIZE(22),
         .text_color = gui::StyleColor::COLOR(0xFFFFFF),
     },
     .image = {
-        .main_size = gui::StyleSize::RECT(500, 800),
+        .main_size = gui::StyleSize::RECT(400, 640),
         .radius = 22,
     },
 };

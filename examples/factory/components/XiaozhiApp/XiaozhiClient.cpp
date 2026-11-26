@@ -16,6 +16,8 @@
 #include "esp_log.h"
 #include "esp_mcp_engine.h"
 #include "esp_xiaozhi_chat.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace esp_brookesia::apps {
 
@@ -131,7 +133,7 @@ public:
 
     esp_err_t stop()
     {
-        _callbacks_enabled.store(false);
+        _callbacks_enabled.store(false, std::memory_order_release);
         _connected.store(false);
         _channel_open.store(false);
 
@@ -142,6 +144,12 @@ public:
                 _event_instance
             );
             _event_instance = nullptr;
+        }
+
+        // Wait for any in-flight callbacks (e.g. sys_evt task) to exit before
+        // tearing down _chat and destroying Impl/_callbacks.
+        while (_inflight_callbacks.load(std::memory_order_acquire) != 0) {
+            vTaskDelay(1);
         }
 
         esp_err_t ret = ESP_OK;
@@ -290,14 +298,48 @@ private:
     esp_mcp_t *_mcp = nullptr;
     esp_event_handler_instance_t _event_instance = nullptr;
     std::atomic<bool> _callbacks_enabled{false};
+    std::atomic<uint32_t> _inflight_callbacks{0};
     std::atomic<bool> _connected{false};
     std::atomic<bool> _channel_open{false};
+
+    class CallbackGuard {
+    public:
+        explicit CallbackGuard(Impl *impl): _impl(impl)
+        {
+            if (!_impl) {
+                return;
+            }
+            _impl->_inflight_callbacks.fetch_add(1, std::memory_order_acq_rel);
+            if (_impl->_callbacks_enabled.load(std::memory_order_acquire)) {
+                _active = true;
+            } else {
+                _impl->_inflight_callbacks.fetch_sub(1, std::memory_order_acq_rel);
+                _impl = nullptr;
+            }
+        }
+
+        ~CallbackGuard()
+        {
+            if (_impl) {
+                _impl->_inflight_callbacks.fetch_sub(1, std::memory_order_acq_rel);
+            }
+        }
+
+        explicit operator bool() const
+        {
+            return _active;
+        }
+
+    private:
+        Impl *_impl = nullptr;
+        bool _active = false;
+    };
 
     static void audioCallback(const uint8_t *data, int len, void *context)
     {
         auto *self = static_cast<Impl *>(context);
-        if (!self || !self->_callbacks_enabled.load() || !data || len <= 0 ||
-                !self->_callbacks.onAudio) {
+        CallbackGuard guard(self);
+        if (!guard || !data || len <= 0 || !self->_callbacks.onAudio) {
             return;
         }
 
@@ -320,7 +362,8 @@ private:
     )
     {
         auto *self = static_cast<Impl *>(context);
-        if (!self || !self->_callbacks_enabled.load()) {
+        CallbackGuard guard(self);
+        if (!guard) {
             return;
         }
 
@@ -410,7 +453,8 @@ private:
         (void)event_base;
         (void)event_data;
         auto *self = static_cast<Impl *>(context);
-        if (!self || !self->_callbacks_enabled.load()) {
+        CallbackGuard guard(self);
+        if (!guard) {
             return;
         }
 

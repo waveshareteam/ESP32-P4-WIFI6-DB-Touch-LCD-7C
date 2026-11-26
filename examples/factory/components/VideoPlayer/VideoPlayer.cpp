@@ -230,13 +230,18 @@ namespace esp_brookesia::apps
     bool VideoPlayer::close()
     {
         ESP_UTILS_LOGD("Close");
-        if (!stopPlaybackTask(pdMS_TO_TICKS(2000))) {
+        const bool stopped = stopPlaybackTask(pdMS_TO_TICKS(5000));
+        if (!stopped) {
             ESP_LOGE(ESP_UTILS_LOG_TAG, "Playback task did not stop before close");
-            return false;
         }
 
         destroyCloseRequestTimer();
-        releasePlaybackResources();
+        if (stopped || playback_exited.load()) {
+            releasePlaybackResources();
+        } else {
+            // Ensure LVGL is never left paused/bypassed even if the worker timed out.
+            deinitDisplayBypass();
+        }
 
         board_display_lock(-1);
         if (status_label)
@@ -246,7 +251,7 @@ namespace esp_brookesia::apps
         }
         board_display_unlock();
 
-        if (avi_file_list)
+        if ((stopped || playback_exited.load()) && avi_file_list)
         {
             for (int i = 0; i < avi_file_count; i++)
             {
@@ -257,7 +262,7 @@ namespace esp_brookesia::apps
             avi_file_count = 0;
         }
 
-        return true;
+        return stopped;
     }
 
     bool VideoPlayer::init()
@@ -277,7 +282,8 @@ namespace esp_brookesia::apps
     bool VideoPlayer::pause()
     {
         ESP_UTILS_LOGD("Pause");
-        if (!stopPlaybackTask(pdMS_TO_TICKS(2000))) {
+        if (!stopPlaybackTask(pdMS_TO_TICKS(5000))) {
+            deinitDisplayBypass();
             return false;
         }
         releasePlaybackResources();
@@ -1270,6 +1276,9 @@ namespace esp_brookesia::apps
                 esp_extractor_frame_info_t frame = {};
                 ret = esp_extractor_read_frame(pb.extractor, &frame);
                 if (ret == ESP_EXTRACTOR_ERR_WAITING_OUTPUT) {
+                    if (playbackInterrupted(pb, request_close)) {
+                        break;
+                    }
                     vTaskDelay(pdMS_TO_TICKS(5));  // Pool full: wait for the workers to release frames
                     continue;
                 }
@@ -1419,7 +1428,9 @@ namespace esp_brookesia::apps
                     ESP_LOGI(ESP_UTILS_LOG_TAG, "Playing AVI file: %s", self->avi_file_list[i]);
                     self->playFile(self->avi_file_list[i], request_close);
                 }
-                vTaskDelay(pdMS_TO_TICKS(500));
+                for (int d = 0; d < 25 && self->loop_playback.load(); d++) {
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
             }
         }
 

@@ -6,14 +6,12 @@
 
 #pragma once
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
 
 #include "esp_err.h"
-#include "esp_http_client.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 namespace esp_brookesia::apps {
 
@@ -55,6 +53,7 @@ public:
     esp_err_t activate(const Info &info, int &http_status);
 
     void cancel();
+    void resetCancel();
 
 private:
     struct Identity {
@@ -64,8 +63,7 @@ private:
         bool factory = false;
     };
 
-    SemaphoreHandle_t _mutex = nullptr;
-    esp_http_client_handle_t _active_client = nullptr;
+    std::atomic<bool> _cancelled{false};
 
     esp_err_t loadIdentity(Identity &identity) const;
     esp_err_t buildBoardJson(const Identity &identity, std::string &json) const;

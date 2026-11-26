@@ -103,6 +103,13 @@ extern "C" void app_main(void)
     ESP_UTILS_CHECK_NULL_EXIT(disp, "Start display failed");
     board_display_backlight_off();
 
+    if (board_rtc_sync_system_time() != ESP_OK) {
+        ESP_LOGW(ESP_UTILS_LOG_TAG, "Sync system time from RTC failed");
+    }
+    if (board_button_init() != ESP_OK) {
+        ESP_LOGW(ESP_UTILS_LOG_TAG, "BOOT button init failed");
+    }
+
     /* Configure GUI lock */
     LvLock::registerCallbacks([](int timeout_ms) {
         bool locked = board_display_lock(timeout_ms);
@@ -261,6 +268,7 @@ extern "C" void app_main(void)
 
         /* Create a timer to update the clock */
         lv_timer_t *status_timer = lv_timer_create([](lv_timer_t *t) {
+            static StatusBar::WifiState last_wifi_state = static_cast<StatusBar::WifiState>(-1);
             time_t now;
             struct tm timeinfo;
             Phone *phone = (Phone *)t->user_data;
@@ -277,11 +285,13 @@ extern "C" void app_main(void)
 
             bool connected = is_wifi_connected();
             StatusBar::WifiState wifi_state = connected ? StatusBar::WifiState::SIGNAL_3 : StatusBar::WifiState::DISCONNECTED;
-
-            ESP_UTILS_CHECK_FALSE_EXIT(
-                phone->getDisplay().getStatusBar()->setWifiIconState(wifi_state),
-                "Refresh status bar failed"
-            );
+            if (wifi_state != last_wifi_state) {
+                ESP_UTILS_CHECK_FALSE_EXIT(
+                    phone->getDisplay().getStatusBar()->setWifiIconState(wifi_state),
+                    "Refresh status bar failed"
+                );
+                last_wifi_state = wifi_state;
+            }
         }, 1000, phone);
         ESP_UTILS_CHECK_NULL_EXIT(status_timer, "Create status timer failed");
 
@@ -322,11 +332,14 @@ extern "C" void app_main(void)
                 }
                 {
                     LvLockGuard gui_guard;
-                    ESP_UTILS_CHECK_FALSE_EXIT(
-                        phone->getDisplay().getRecentsScreen()->setMemoryLabel(
-                            internal_free / 1024, internal_total / 1024, external_free / 1024, external_total / 1024
-                        ), "Set memory label failed"
-                    );
+                    auto *recents = phone->getDisplay().getRecentsScreen();
+                    if ((recents != nullptr) && recents->checkVisible()) {
+                        ESP_UTILS_CHECK_FALSE_EXIT(
+                            recents->setMemoryLabel(
+                                internal_free / 1024, internal_total / 1024, external_free / 1024, external_total / 1024
+                            ), "Set memory label failed"
+                        );
+                    }
                 }
 
                 boost::this_thread::sleep_for(boost::chrono::seconds(5));

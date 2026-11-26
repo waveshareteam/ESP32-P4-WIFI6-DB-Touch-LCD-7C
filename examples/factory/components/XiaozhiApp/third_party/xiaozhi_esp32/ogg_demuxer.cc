@@ -249,10 +249,12 @@ size_t OggDemuxer::Process(const uint8_t* data, size_t size)
                             if (ctx_.packet_len >=8 && memcmp(ctx_.packet_buf, "OpusHead", 8) == 0) {
                                 opus_info_.head_seen = true;
                                 if (ctx_.packet_len >= 19) {
-                                    opus_info_.sample_rate = ctx_.packet_buf[12] |
-                                                            (ctx_.packet_buf[13] << 8) |
-                                                            (ctx_.packet_buf[14] << 16) |
-                                                            (ctx_.packet_buf[15] << 24);
+                                    opus_info_.sample_rate = static_cast<int>(
+                                        static_cast<uint32_t>(ctx_.packet_buf[12]) |
+                                        (static_cast<uint32_t>(ctx_.packet_buf[13]) << 8) |
+                                        (static_cast<uint32_t>(ctx_.packet_buf[14]) << 16) |
+                                        (static_cast<uint32_t>(ctx_.packet_buf[15]) << 24)
+                                    );
                                     ESP_LOGD(TAG, "OpusHead found, sample_rate=%d", opus_info_.sample_rate);
                                 }
                                 ctx_.packet_len = 0;

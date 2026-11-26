@@ -182,19 +182,28 @@ esp_mcp_value_t getSystemInfo(const esp_mcp_property_list_t *)
     cJSON_AddStringToObject(application, "idf_version", esp_get_idf_version());
 
     cJSON *partitions = cJSON_AddArrayToObject(root, "partition_table");
-    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
-    for (; it; it = esp_partition_next(it)) {
-        const esp_partition_t *partition = esp_partition_get(it);
-        cJSON *item = cJSON_CreateObject();
-        if (!item) break;
-        cJSON_AddStringToObject(item, "label", partition->label);
-        cJSON_AddNumberToObject(item, "type", partition->type);
-        cJSON_AddNumberToObject(item, "subtype", partition->subtype);
-        cJSON_AddNumberToObject(item, "address", partition->address);
-        cJSON_AddNumberToObject(item, "size", partition->size);
-        cJSON_AddItemToArray(partitions, item);
+    if (partitions) {
+        esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+        for (; it; it = esp_partition_next(it)) {
+            const esp_partition_t *partition = esp_partition_get(it);
+            cJSON *item = cJSON_CreateObject();
+            if (!partition || !item) {
+                cJSON_Delete(item);
+                if (!item) break;
+                continue;
+            }
+            cJSON_AddStringToObject(item, "label", partition->label);
+            cJSON_AddNumberToObject(item, "type", partition->type);
+            cJSON_AddNumberToObject(item, "subtype", partition->subtype);
+            cJSON_AddNumberToObject(item, "address", partition->address);
+            cJSON_AddNumberToObject(item, "size", partition->size);
+            if (!cJSON_AddItemToArray(partitions, item)) {
+                cJSON_Delete(item);
+                break;
+            }
+        }
+        esp_partition_iterator_release(it);
     }
-    esp_partition_iterator_release(it);
 
     cJSON *board = cJSON_AddObjectToObject(root, "board");
     cJSON_AddStringToObject(board, "name", "esp32-p4-wifi6-db-touch-lcd-7c");

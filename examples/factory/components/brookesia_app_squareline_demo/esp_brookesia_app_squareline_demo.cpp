@@ -62,14 +62,19 @@ bool SquarelineDemo::back(void)
     return true;
 }
 
-// bool SquarelineDemo::close(void)
-// {
-//     ESP_UTILS_LOGD("Close");
+bool SquarelineDemo::close(void)
+{
+    ESP_UTILS_LOGD("Close");
 
-//     /* Do some operations here if needed */
+    if (ui_screen_clock != nullptr) {
+        lv_anim_delete(ui_screen_clock, nullptr);
+    }
+    if (ui_screen_splash != nullptr) {
+        lv_anim_delete(ui_screen_splash, nullptr);
+    }
 
-//     return true;
-// }
+    return true;
+}
 
 // bool SquarelineDemo::init()
 // {
@@ -127,6 +132,9 @@ extern "C" {
     void upanim_Animation(lv_obj_t *TargetObject, int delay)
     {
         ui_anim_user_data_t *PropertyAnimation_0_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_0_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_0_user_data->target = TargetObject;
         PropertyAnimation_0_user_data->val = -1;
         lv_anim_t PropertyAnimation_0;
@@ -154,6 +162,9 @@ extern "C" {
         );
 
         ui_anim_user_data_t *PropertyAnimation_1_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_1_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_1_user_data->target = TargetObject;
         PropertyAnimation_1_user_data->val = -1;
         lv_anim_t PropertyAnimation_1;
@@ -183,6 +194,9 @@ extern "C" {
     void hour_Animation(lv_obj_t *TargetObject, int delay)
     {
         ui_anim_user_data_t *PropertyAnimation_0_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_0_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_0_user_data->target = TargetObject;
         PropertyAnimation_0_user_data->val = -1;
         lv_anim_t PropertyAnimation_0;
@@ -209,6 +223,9 @@ extern "C" {
         );
 
         ui_anim_user_data_t *PropertyAnimation_1_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_1_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_1_user_data->target = TargetObject;
         PropertyAnimation_1_user_data->val = -1;
         lv_anim_t PropertyAnimation_1;
@@ -238,6 +255,9 @@ extern "C" {
     void min_Animation(lv_obj_t *TargetObject, int delay)
     {
         ui_anim_user_data_t *PropertyAnimation_0_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_0_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_0_user_data->target = TargetObject;
         PropertyAnimation_0_user_data->val = -1;
         lv_anim_t PropertyAnimation_0;
@@ -264,6 +284,9 @@ extern "C" {
         );
 
         ui_anim_user_data_t *PropertyAnimation_1_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_1_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_1_user_data->target = TargetObject;
         PropertyAnimation_1_user_data->val = -1;
         lv_anim_t PropertyAnimation_1;
@@ -293,6 +316,9 @@ extern "C" {
     void sec_Animation(lv_obj_t *TargetObject, int delay)
     {
         ui_anim_user_data_t *PropertyAnimation_0_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_0_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_0_user_data->target = TargetObject;
         PropertyAnimation_0_user_data->val = -1;
         lv_anim_t PropertyAnimation_0;
@@ -319,6 +345,9 @@ extern "C" {
         );
 
         ui_anim_user_data_t *PropertyAnimation_1_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_1_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_1_user_data->target = TargetObject;
         PropertyAnimation_1_user_data->val = -1;
         lv_anim_t PropertyAnimation_1;
@@ -348,6 +377,9 @@ extern "C" {
     void scrolldot_Animation(lv_obj_t *TargetObject, int delay)
     {
         ui_anim_user_data_t *PropertyAnimation_0_user_data = (ui_anim_user_data_t *)lv_malloc(sizeof(ui_anim_user_data_t));
+        if (PropertyAnimation_0_user_data == nullptr) {
+            return;
+        }
         PropertyAnimation_0_user_data->target = TargetObject;
         PropertyAnimation_0_user_data->val = -1;
         lv_anim_t PropertyAnimation_0;

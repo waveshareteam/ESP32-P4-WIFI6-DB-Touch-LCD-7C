@@ -6,6 +6,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "board_audio.h"
@@ -14,6 +16,7 @@
 static const char *TAG = "board_audio";
 static bool _is_player_init = false;
 
+static portMUX_TYPE audio_cb_lock = portMUX_INITIALIZER_UNLOCKED;
 static audio_player_cb_t audio_idle_callback = NULL;
 static void *audio_idle_cb_user_data = NULL;
 static char audio_file_path[128];
@@ -43,9 +46,14 @@ static esp_err_t set_audio_file_path(const char *file_path)
 
 static void audio_callback(audio_player_cb_ctx_t *ctx)
 {
-    if (audio_idle_callback) {
-        ctx->user_ctx = audio_idle_cb_user_data;
-        audio_idle_callback(ctx);
+    portENTER_CRITICAL(&audio_cb_lock);
+    audio_player_cb_t cb = audio_idle_callback;
+    void *user_data = audio_idle_cb_user_data;
+    portEXIT_CRITICAL(&audio_cb_lock);
+
+    if (cb) {
+        ctx->user_ctx = user_data;
+        cb(ctx);
     }
 }
 
@@ -73,9 +81,19 @@ esp_err_t board_player_init(void)
 
 esp_err_t board_player_del(void)
 {
+    if (!_is_player_init) {
+        return ESP_OK;
+    }
+
+    portENTER_CRITICAL(&audio_cb_lock);
+    audio_idle_callback = NULL;
+    audio_idle_cb_user_data = NULL;
+    portEXIT_CRITICAL(&audio_cb_lock);
+
     esp_err_t ret = audio_player_delete();
     ESP_RETURN_ON_ERROR(ret, TAG, "Delete audio player failed");
     _is_player_init = false;
+    audio_file_path[0] = '\0';
     ESP_RETURN_ON_ERROR(board_codec_output_stop(), TAG, "Stop playback codec failed");
 
     return ESP_OK;
@@ -144,8 +162,10 @@ esp_err_t board_player_play_file(const char *file_path)
 
 void board_player_register_callback(audio_player_cb_t cb, void *user_data)
 {
+    portENTER_CRITICAL(&audio_cb_lock);
     audio_idle_callback = cb;
     audio_idle_cb_user_data = user_data;
+    portEXIT_CRITICAL(&audio_cb_lock);
 }
 
 bool board_player_is_playing_by_path(const char *file_path)
@@ -158,5 +178,8 @@ bool board_player_is_playing_by_path(const char *file_path)
 
 bool board_player_is_playing_by_index(file_iterator_instance_t *instance, int index)
 {
+    if (instance == NULL) {
+        return false;
+    }
     return (index == file_iterator_get_index(instance));
 }

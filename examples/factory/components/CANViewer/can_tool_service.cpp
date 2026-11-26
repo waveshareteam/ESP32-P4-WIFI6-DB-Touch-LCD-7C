@@ -145,10 +145,13 @@ esp_err_t CanToolService::start(
     _stopping = false;
     _last_error = ESP_OK;
 
+    gpio_num_t tx_gpio = GPIO_NUM_NC;
+    gpio_num_t rx_gpio = GPIO_NUM_NC;
+    (void)board_twai_get_pins(&tx_gpio, &rx_gpio);
     ESP_UTILS_LOGI(
         "TWAI started: tx=%d rx=%d bitrate=%d mode=%s",
-        listen_only ? -1 : static_cast<int>(BOARD_TWAI_TX_GPIO),
-        static_cast<int>(BOARD_TWAI_RX_GPIO),
+        listen_only ? -1 : static_cast<int>(tx_gpio),
+        static_cast<int>(rx_gpio),
         bitrate,
         listen_only ? "listen-only" : "normal"
     );

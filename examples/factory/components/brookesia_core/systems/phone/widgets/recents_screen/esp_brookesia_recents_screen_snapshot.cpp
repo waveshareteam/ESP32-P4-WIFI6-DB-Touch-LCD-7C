@@ -113,7 +113,10 @@ bool RecentsScreenSnapshot::begin(lv_obj_t *parent)
     ESP_UTILS_CHECK_FALSE_GOTO(updateByNewData(), err, "Update failed");
 
     // Other operations
-    _origin_y = getCurrentY();
+    lv_obj_update_layout(_drag_obj.get());
+    lv_obj_refr_pos(_drag_obj.get());
+    _origin_y = lv_obj_get_y(_drag_obj.get());
+    _current_y = _origin_y;
 
     return true;
 
@@ -140,16 +143,6 @@ bool RecentsScreenSnapshot::del(void)
     _snapshot_image.reset();
 
     return true;
-}
-
-int RecentsScreenSnapshot::getCurrentY(void) const
-{
-    ESP_UTILS_CHECK_FALSE_RETURN(checkInitialized(), 0, "Not initialized");
-
-    lv_obj_update_layout(_drag_obj.get());
-    lv_obj_refr_pos(_drag_obj.get());
-
-    return lv_obj_get_y(_drag_obj.get());
 }
 
 bool RecentsScreenSnapshot::updateByNewData(void)

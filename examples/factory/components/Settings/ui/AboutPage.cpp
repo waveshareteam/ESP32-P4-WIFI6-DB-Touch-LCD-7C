@@ -1,7 +1,7 @@
 #include "AboutPage.hpp"
 #include "SettingsUI.hpp"
+#include "board.h"
 #include "esp_app_desc.h"
-#include "esp_board_manager.h"
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 #include <cctype>
@@ -18,13 +18,13 @@ LV_IMG_DECLARE(logo);
 
 namespace {
 
-// Board identity comes from board_info.yaml through esp_board_manager.
-const esp_board_info_t &board_info()
+// Board identity comes from board_info.yaml through the board layer.
+const board_info_t &board_info()
 {
-    static esp_board_info_t info = {};
+    static board_info_t info = {};
     static bool loaded = false;
     if (!loaded) {
-        loaded = esp_board_manager_get_board_info(&info) == ESP_OK;
+        loaded = board_get_info(&info) == ESP_OK;
     }
     return info;
 }
@@ -37,7 +37,7 @@ const char *or_unknown(const char *value)
 const char *product_name()
 {
     // The description is "<manufacturer> <product>"; the manufacturer has its own row.
-    const esp_board_info_t &info = board_info();
+    const board_info_t &info = board_info();
     const char *description = info.description;
     if (description != nullptr && info.manufacturer != nullptr) {
         const size_t len = std::strlen(info.manufacturer);
@@ -175,10 +175,7 @@ namespace esp_brookesia::apps
         page_root = settings_ui::create_page(lv_scr_act(), Settings::requestInstance()->getContentTopInset());
         settings_ui::create_header(page_root, "About", [](lv_event_t *e) {
             (void)e;
-            lv_async_call([](void *param) {
-                (void)param;
-                Settings::requestInstance()->showRootPage();
-            }, nullptr);
+            Settings::showRootPageAsync();
         });
 
         settings_ui::init_list_styles(style_list, style_list_btn, style_list_text, style_list_btn_pressed);

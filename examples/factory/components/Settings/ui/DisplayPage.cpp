@@ -38,10 +38,7 @@ namespace esp_brookesia::apps
         page_root = settings_ui::create_page(lv_scr_act(), Settings::requestInstance()->getContentTopInset());
         settings_ui::create_header(page_root, "Display", [](lv_event_t *e) {
             (void)e;
-            lv_async_call([](void *param) {
-                (void)param;
-                Settings::requestInstance()->showRootPage();
-            }, nullptr);
+            Settings::showRootPageAsync();
         });
 
         settings_ui::init_list_styles(style_list, style_list_btn, style_list_text, style_list_btn_pressed);
@@ -111,7 +108,10 @@ namespace esp_brookesia::apps
         if (instance->label != nullptr) {
             lv_label_set_text_fmt(instance->label, "%ld%%", static_cast<long>(value));
         }
-        board_display_brightness_set(value);
+        const esp_err_t err = board_display_brightness_set(value);
+        if (err != ESP_OK) {
+            ESP_UTILS_LOGW("Set display brightness failed: %s", esp_err_to_name(err));
+        }
     }
 
     bool DisplayPage::back()

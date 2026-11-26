@@ -12,16 +12,15 @@ Configures and tests GPIOs interactively through a serial console built on the A
 
 ## How to Run
 
-1. Install the `esp32` board package (Arduino-ESP32) in the version listed in the repository README.
-2. Install the board definition from [`examples/arduino/examples/esp32`](../esp32/README.md) and install any libraries the sketch includes.
-3. Select the board and the **Tools** menu options that match the FQBN in `.github/product.json`:
+1. Install any libraries the sketch includes.
+2. Select the board and serial port in **Tools**:
 
    | Tools menu | Value |
    | --- | --- |
-   | Board | Waveshare ESP32-P4-WIFI6-DB Touch LCD 7C |
+   | Board | ESP32P4 Dev Module |
    | PSRAM | Enabled |
-
-4. Open `gpio.ino` and upload. Open the serial monitor at 115200 baud.
+   | Partition Scheme | Huge APP (3MB No OTA/1MB SPIFFS) |
+3. Open `gpio.ino` and upload. Open the serial monitor at 115200 baud.
 
 ## Expected Result
 

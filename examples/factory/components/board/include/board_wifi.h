@@ -190,6 +190,16 @@ void board_wifi_service_get_link(board_wifi_link_t *link);
  */
 bool board_wifi_service_is_connected(void);
 
+/**
+ * @brief Disconnect the Wi-Fi station from the current AP.
+ */
+esp_err_t board_wifi_disconnect(void);
+
+/**
+ * @brief Enable or disable Wi-Fi low-latency mode (disables modem power save when true).
+ */
+esp_err_t board_wifi_set_low_latency(bool enable);
+
 #ifdef __cplusplus
 }
 #endif
